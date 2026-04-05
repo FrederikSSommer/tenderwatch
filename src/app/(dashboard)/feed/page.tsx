@@ -1,3 +1,4 @@
+import { Suspense } from 'react'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { TenderCard } from '@/components/TenderCard'
 import { FeedFilters } from '@/components/FeedFilters'
@@ -44,7 +45,9 @@ export default async function FeedPage({
         </p>
       </div>
 
-      <FeedFilters profiles={profiles || []} />
+      <Suspense fallback={<div className="h-10" />}>
+        <FeedFilters profiles={profiles || []} />
+      </Suspense>
 
       <div className="mt-6 space-y-3">
         {matches && matches.length > 0 ? (

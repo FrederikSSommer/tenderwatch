@@ -1,3 +1,4 @@
+import { Suspense } from 'react'
 import { getDemoMatchesWithTenders, DEMO_PROFILES } from '@/lib/demo-data'
 import { TenderCard } from '@/components/TenderCard'
 import { FeedFilters } from '@/components/FeedFilters'
@@ -14,7 +15,9 @@ export default function DemoFeedPage() {
         </p>
       </div>
 
-      <FeedFilters profiles={DEMO_PROFILES} />
+      <Suspense fallback={<div className="h-10" />}>
+        <FeedFilters profiles={DEMO_PROFILES} />
+      </Suspense>
 
       <div className="mt-6 space-y-3">
         {matches.map((match) => (
