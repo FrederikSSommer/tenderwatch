@@ -24,7 +24,7 @@ export class TEDClient {
       query: params.q,
       pageSize: params.pageSize ?? 100,
       page: params.pageNum ?? 1,
-      scope: params.scope ?? 3,
+      scope: params.scope ?? 2,
       sortField: params.sortField ?? 'DD',
       sortOrder: params.sortOrder ?? 'desc',
     }

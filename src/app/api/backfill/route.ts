@@ -184,7 +184,7 @@ export async function POST(request: NextRequest) {
         query: `PD>=${dateStr} AND TD=[3]`,
         pageSize: 100,
         page,
-        scope: 3,
+        scope: 2,
         sortField: 'DD',
         sortOrder: 'desc',
       }
