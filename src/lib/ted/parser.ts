@@ -18,14 +18,19 @@ export interface ParsedTender {
   raw_data: unknown
 }
 
-// Extract from multilingual title object { eng: "...", dan: "...", ... }
+// Extract from multilingual object: { eng: "...", dan: "..." } or { eng: ["..."], dan: ["..."] }
 function extractMultilingual(obj: unknown): string | null {
-  if (!obj || typeof obj !== 'object') return null
+  if (!obj || typeof obj !== 'object') return typeof obj === 'string' ? obj : null
   if (Array.isArray(obj)) {
     return obj.map(d => extractMultilingual(d)).filter(Boolean).join(' ') || null
   }
-  const t = obj as Record<string, string>
-  return t['eng'] || t['dan'] || Object.values(t)[0] || null
+  const t = obj as Record<string, unknown>
+  for (const lang of ['eng', 'dan', ...Object.keys(t)]) {
+    const val = t[lang]
+    if (typeof val === 'string' && val) return val
+    if (Array.isArray(val) && val.length > 0 && typeof val[0] === 'string') return val[0]
+  }
+  return null
 }
 
 export function parseTEDNotice(notice: Record<string, unknown>): ParsedTender | null {
@@ -35,14 +40,7 @@ export function parseTEDNotice(notice: Record<string, unknown>): ParsedTender | 
 
     const title = extractMultilingual(notice['notice-title']) || 'Untitled'
     const description = extractMultilingual(notice['description-glo'])
-
-    // Buyer name
-    const buyerNameRaw = notice['buyer-name']
-    const buyerName = Array.isArray(buyerNameRaw)
-      ? (buyerNameRaw[0] as string) || null
-      : typeof buyerNameRaw === 'string'
-        ? buyerNameRaw
-        : null
+    const buyerName = extractMultilingual(notice['buyer-name'])
 
     // Country
     const countryRaw = notice['organisation-country-buyer']

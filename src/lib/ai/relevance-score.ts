@@ -75,8 +75,18 @@ export function calculateRelevance(
   score = Math.min(score, 70)
 
   // Geography match (15 points)
+  // TED uses 3-letter codes (DNK), profiles use 2-letter (DK)
   if (tender.buyer_country && profile.countries.length > 0) {
-    if (profile.countries.includes(tender.buyer_country)) {
+    const iso3to2: Record<string, string> = {
+      'DNK': 'DK', 'NOR': 'NO', 'SWE': 'SE', 'DEU': 'DE',
+      'NLD': 'NL', 'FIN': 'FI', 'FRA': 'FR', 'GBR': 'UK',
+      'ESP': 'ES', 'ITA': 'IT', 'POL': 'PL', 'BEL': 'BE',
+      'AUT': 'AT', 'PRT': 'PT', 'IRL': 'IE', 'CZE': 'CZ',
+      'ROU': 'RO', 'BGR': 'BG', 'HRV': 'HR', 'LTU': 'LT',
+      'LVA': 'LV', 'EST': 'EE',
+    }
+    const country2 = iso3to2[tender.buyer_country] || tender.buyer_country
+    if (profile.countries.includes(country2) || profile.countries.includes(tender.buyer_country)) {
       score += 15
     }
   }

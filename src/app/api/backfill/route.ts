@@ -48,23 +48,19 @@ interface TenderInsert {
   raw_data: unknown
 }
 
-// Extract title — notice-title is a multilingual object { eng: "...", dan: "...", ... }
-function extractTitle(titleObj: unknown): string {
-  if (!titleObj || typeof titleObj !== 'object') return 'Untitled'
-  const t = titleObj as Record<string, string>
-  // Prefer English, then Danish, then first available
-  return t['eng'] || t['dan'] || Object.values(t)[0] || 'Untitled'
-}
-
-// Extract description — same multilingual format
-function extractDescription(descObj: unknown): string | null {
-  if (!descObj || typeof descObj !== 'object') return null
-  if (Array.isArray(descObj)) {
-    // description-glo can be an array of multilingual objects
-    return descObj.map(d => extractTitle(d)).filter(Boolean).join(' ') || null
+// Extract from multilingual object: { eng: "...", dan: "..." } or { eng: ["..."], dan: ["..."] }
+function extractMultilingual(obj: unknown): string | null {
+  if (!obj || typeof obj !== 'object') return typeof obj === 'string' ? obj : null
+  if (Array.isArray(obj)) {
+    return obj.map(d => extractMultilingual(d)).filter(Boolean).join(' ') || null
   }
-  const d = descObj as Record<string, string>
-  return d['eng'] || d['dan'] || Object.values(d)[0] || null
+  const t = obj as Record<string, unknown>
+  for (const lang of ['eng', 'dan', ...Object.keys(t)]) {
+    const val = t[lang]
+    if (typeof val === 'string' && val) return val
+    if (Array.isArray(val) && val.length > 0 && typeof val[0] === 'string') return val[0]
+  }
+  return null
 }
 
 function parseNotice(raw: Record<string, unknown>): TenderInsert | null {
@@ -72,27 +68,17 @@ function parseNotice(raw: Record<string, unknown>): TenderInsert | null {
     const pubNumber = raw['publication-number'] as string | undefined
     if (!pubNumber) return null
 
-    const title = extractTitle(raw['notice-title'])
-
-    const description = extractDescription(raw['description-glo'])
-
-    // Buyer name — can be string or array
-    const buyerNameRaw = raw['buyer-name']
-    const buyerName = Array.isArray(buyerNameRaw)
-      ? (buyerNameRaw[0] as string) || null
-      : typeof buyerNameRaw === 'string'
-        ? buyerNameRaw
-        : null
+    const title = extractMultilingual(raw['notice-title']) || 'Untitled'
+    const description = extractMultilingual(raw['description-glo'])
+    const buyerName = extractMultilingual(raw['buyer-name'])
 
     // Country — array of country codes
     const countryRaw = raw['organisation-country-buyer']
     const buyerCountry = Array.isArray(countryRaw)
       ? (countryRaw[0] as string) || null
-      : typeof countryRaw === 'string'
-        ? countryRaw
-        : null
+      : typeof countryRaw === 'string' ? countryRaw : null
 
-    // CPV codes — array, may have duplicates
+    // CPV codes — deduplicated
     const cpvRaw = raw['classification-cpv']
     const cpvCodes = Array.isArray(cpvRaw)
       ? [...new Set(cpvRaw.map(c => String(c).replace(/-\d$/, '')))]
@@ -128,13 +114,10 @@ function parseNotice(raw: Record<string, unknown>): TenderInsert | null {
       pubDate = new Date().toISOString().split('T')[0]
     }
 
-    // Notice/contract type
     const noticeType = typeof raw['notice-type'] === 'string' ? raw['notice-type'] : null
     const contractNature = Array.isArray(raw['contract-nature'])
       ? (raw['contract-nature'][0] as string) || null
-      : typeof raw['contract-nature'] === 'string'
-        ? raw['contract-nature']
-        : null
+      : typeof raw['contract-nature'] === 'string' ? raw['contract-nature'] : null
 
     return {
       source: 'ted',
@@ -161,6 +144,79 @@ function parseNotice(raw: Record<string, unknown>): TenderInsert | null {
   }
 }
 
+// Build targeted TED queries from user profiles
+function buildTedQueries(
+  profiles: { cpv_codes: string[]; keywords: string[]; countries: string[] }[],
+  dateStr: string
+): string[] {
+  const queries: string[] = []
+
+  for (const profile of profiles) {
+    // Query by CPV codes (most specific)
+    if (profile.cpv_codes.length > 0) {
+      // TED uses classification-cpv field — search by CPV prefix
+      const cpvParts = profile.cpv_codes.slice(0, 5).map(c => {
+        // Use 2-digit division level for broader matching
+        const prefix = c.substring(0, 2)
+        return `classification-cpv=${prefix}*`
+      })
+      queries.push(`PD>=${dateStr} AND (${cpvParts.join(' OR ')})`)
+    }
+
+    // Query by keywords (full-text search)
+    if (profile.keywords.length > 0) {
+      const kwParts = profile.keywords.slice(0, 5).map(k => `FT~"${k}"`)
+      queries.push(`PD>=${dateStr} AND (${kwParts.join(' OR ')})`)
+    }
+
+    // Query by country if set
+    if (profile.countries.length > 0 && profile.countries.length <= 3) {
+      const countryMap: Record<string, string> = {
+        'DK': 'DNK', 'NO': 'NOR', 'SE': 'SWE', 'DE': 'DEU',
+        'NL': 'NLD', 'FI': 'FIN', 'FR': 'FRA', 'UK': 'GBR',
+        'ES': 'ESP', 'IT': 'ITA', 'PL': 'POL', 'BE': 'BEL',
+        'AT': 'AUT', 'PT': 'PRT', 'IE': 'IRL', 'CZ': 'CZE',
+        'RO': 'ROU', 'BG': 'BGR', 'HR': 'HRV', 'LT': 'LTU',
+        'LV': 'LVA', 'EE': 'EST',
+      }
+      const tedCountries = profile.countries
+        .map(c => countryMap[c] || c)
+        .filter(Boolean)
+      if (tedCountries.length > 0) {
+        const countryFilter = tedCountries.map(c => `organisation-country-buyer=${c}`).join(' OR ')
+        queries.push(`PD>=${dateStr} AND (${countryFilter})`)
+      }
+    }
+  }
+
+  // Deduplicate queries
+  return [...new Set(queries)]
+}
+
+async function fetchTedPage(query: string, page: number): Promise<Record<string, unknown>[]> {
+  const searchBody = {
+    query,
+    fields: TED_FIELDS,
+    limit: 100,
+    page,
+    scope: 2,
+  }
+
+  const response = await fetch(`${TED_API_BASE}/notices/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(searchBody),
+  })
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => 'no body')
+    throw new Error(`TED API ${response.status}: ${text.slice(0, 200)}`)
+  }
+
+  const data = await response.json()
+  return data.notices || []
+}
+
 export async function POST(request: NextRequest) {
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -178,65 +234,7 @@ export async function POST(request: NextRequest) {
   const serviceClient = getServiceClient()
   const errors: string[] = []
 
-  // Step 1: Fetch from TED API
-  let totalIngested = 0
-  let page = 1
-  let hasMore = true
-
-  try {
-    while (hasMore && page <= 5) {
-      const searchBody = {
-        query: `PD>=${dateStr}`,
-        fields: TED_FIELDS,
-        limit: 100,
-        page,
-        scope: 2,
-      }
-
-      const tedResponse = await fetch(`${TED_API_BASE}/notices/search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(searchBody),
-      })
-
-      if (!tedResponse.ok) {
-        const text = await tedResponse.text().catch(() => 'no body')
-        errors.push(`TED API returned ${tedResponse.status}: ${text.slice(0, 300)}`)
-        break
-      }
-
-      const tedData = await tedResponse.json()
-      const results: Record<string, unknown>[] = tedData.notices || []
-
-      if (!Array.isArray(results) || results.length === 0) {
-        hasMore = false
-        break
-      }
-
-      const parsed = results
-        .map(parseNotice)
-        .filter((t): t is TenderInsert => t !== null)
-
-      if (parsed.length > 0) {
-        const { error } = await serviceClient
-          .from('tenders')
-          .upsert(parsed, { onConflict: 'source,external_id' })
-
-        if (error) {
-          errors.push(`DB upsert error: ${error.message}`)
-        } else {
-          totalIngested += parsed.length
-        }
-      }
-
-      hasMore = results.length >= 100
-      page++
-    }
-  } catch (err) {
-    errors.push(`TED fetch error: ${err instanceof Error ? err.message : String(err)}`)
-  }
-
-  // Step 2: Match against this user's profiles
+  // Get user's profiles first — we need them to build targeted queries
   const { data: profiles } = await serviceClient
     .from('monitoring_profiles')
     .select('*')
@@ -245,23 +243,76 @@ export async function POST(request: NextRequest) {
 
   if (!profiles || profiles.length === 0) {
     return NextResponse.json({
-      success: totalIngested > 0,
-      ingested: totalIngested,
+      success: false,
+      ingested: 0,
       matched: 0,
       days,
-      errors: errors.length > 0 ? errors : undefined,
-      message: 'No active profiles to match against.',
+      errors: ['No active profiles. Create a monitoring profile first.'],
     })
   }
 
-  // Get all tenders from the backfill period
+  // Build targeted TED queries from profiles
+  const tedQueries = buildTedQueries(profiles, dateStr)
+
+  // Step 1: Fetch from TED with targeted queries
+  let totalIngested = 0
+  const seenIds = new Set<string>()
+
+  for (const query of tedQueries) {
+    try {
+      let page = 1
+      let hasMore = true
+
+      while (hasMore && page <= 3) {
+        // Rate limit between requests
+        if (page > 1 || tedQueries.indexOf(query) > 0) {
+          await new Promise(r => setTimeout(r, 500))
+        }
+
+        const notices = await fetchTedPage(query, page)
+
+        if (notices.length === 0) {
+          hasMore = false
+          break
+        }
+
+        const parsed = notices
+          .map(parseNotice)
+          .filter((t): t is TenderInsert => t !== null)
+          .filter(t => {
+            if (seenIds.has(t.external_id)) return false
+            seenIds.add(t.external_id)
+            return true
+          })
+
+        if (parsed.length > 0) {
+          const { error } = await serviceClient
+            .from('tenders')
+            .upsert(parsed, { onConflict: 'source,external_id' })
+
+          if (error) {
+            errors.push(`DB upsert: ${error.message}`)
+          } else {
+            totalIngested += parsed.length
+          }
+        }
+
+        hasMore = notices.length >= 100
+        page++
+      }
+    } catch (err) {
+      errors.push(`TED query error: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  // Step 2: Match against profiles
   const { data: tenders, error: tenderFetchErr } = await serviceClient
     .from('tenders')
     .select('*')
     .gte('publication_date', since.toISOString().split('T')[0])
 
   if (tenderFetchErr) {
-    errors.push(`DB tender fetch error: ${tenderFetchErr.message}`)
+    errors.push(`DB fetch: ${tenderFetchErr.message}`)
   }
 
   let totalMatches = 0
@@ -309,7 +360,7 @@ export async function POST(request: NextRequest) {
           batch,
           { onConflict: 'tender_id,profile_id' }
         )
-        if (error) errors.push(`Match upsert error: ${error.message}`)
+        if (error) errors.push(`Match upsert: ${error.message}`)
       }
       totalMatches = matches.length
     }
@@ -320,6 +371,7 @@ export async function POST(request: NextRequest) {
     ingested: totalIngested,
     matched: totalMatches,
     days,
+    queries_run: tedQueries.length,
     tenders_in_period: tenders?.length ?? 0,
     errors: errors.length > 0 ? errors : undefined,
   })
