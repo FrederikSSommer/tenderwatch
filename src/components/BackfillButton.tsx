@@ -17,7 +17,9 @@ interface BackfillResult {
   ingested: number
   matched: number
   days: number
+  tenders_in_period?: number
   error?: string
+  errors?: string[]
   message?: string
 }
 
@@ -43,9 +45,12 @@ export function BackfillButton({ compact = false }: { compact?: boolean }) {
       const data = await response.json()
 
       if (!response.ok) {
-        setError(data.error || 'Backfill failed')
+        setError(data.error || data.errors?.join('; ') || 'Backfill failed')
       } else {
         setResult(data)
+        if (data.errors?.length) {
+          setError(data.errors.join('; '))
+        }
         router.refresh()
       }
     } catch {
@@ -164,6 +169,9 @@ export function BackfillButton({ compact = false }: { compact?: boolean }) {
           <ul className="mt-2 text-sm text-green-700 space-y-1">
             <li>Searched the past {result.days} days</li>
             <li>{result.ingested} tenders fetched from TED</li>
+            {result.tenders_in_period !== undefined && (
+              <li>{result.tenders_in_period} total tenders in this period</li>
+            )}
             <li><strong>{result.matched} tenders matched</strong> your profiles</li>
           </ul>
           {result.message && (
