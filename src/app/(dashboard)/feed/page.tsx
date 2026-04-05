@@ -73,7 +73,7 @@ export default async function FeedPage({
             </p>
             {(!profiles || profiles.length === 0) && (
               <a
-                href="/dashboard/profiles"
+                href="/profiles"
                 className="mt-4 inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
               >
                 Create profile

@@ -83,14 +83,14 @@ export function ProfileEditor({ profile }: ProfileEditorProps) {
       await supabase.from('monitoring_profiles').update(data).eq('id', profile.id)
     }
     setLoading(false)
-    router.push('/dashboard/profiles')
+    router.push('/profiles')
     router.refresh()
   }
 
   async function handleDelete() {
     if (!profile || !confirm('Delete this profile?')) return
     await supabase.from('monitoring_profiles').delete().eq('id', profile.id)
-    router.push('/dashboard/profiles')
+    router.push('/profiles')
     router.refresh()
   }
 

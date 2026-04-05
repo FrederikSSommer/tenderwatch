@@ -45,7 +45,7 @@ export default async function CalendarPage() {
                 {grouped.get(date)!.map((item: any) => (
                   <Link
                     key={item.tender.id}
-                    href={`/dashboard/tender/${item.tender.id}`}
+                    href={`/tender/${item.tender.id}`}
                     className="block rounded-lg border border-gray-200 bg-white p-3 hover:border-gray-300 transition-colors"
                   >
                     <p className="font-medium text-gray-900 text-sm">{item.tender.title}</p>

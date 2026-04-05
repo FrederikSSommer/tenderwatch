@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server'
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
-  const next = searchParams.get('next') ?? '/dashboard/feed'
+  const next = searchParams.get('next') ?? '/feed'
 
   if (code) {
     const supabase = await createServerSupabaseClient()
@@ -20,7 +20,7 @@ export async function GET(request: Request) {
           .limit(1)
 
         if (!profiles || profiles.length === 0) {
-          return NextResponse.redirect(`${origin}/dashboard/onboarding`)
+          return NextResponse.redirect(`${origin}/onboarding`)
         }
       }
       return NextResponse.redirect(`${origin}${next}`)

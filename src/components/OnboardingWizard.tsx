@@ -87,7 +87,7 @@ export function OnboardingWizard() {
     })
 
     setLoading(false)
-    router.push('/dashboard/feed')
+    router.push('/feed')
   }
 
   function nextStep() {

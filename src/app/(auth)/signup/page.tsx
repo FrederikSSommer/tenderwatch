@@ -5,7 +5,7 @@ import { SignupForm } from './signup-form'
 export default async function SignupPage() {
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (user) redirect('/dashboard/feed')
+  if (user) redirect('/feed')
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">

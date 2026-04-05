@@ -19,7 +19,7 @@ export function FeedFilters({ profiles }: { profiles: Profile[] }) {
     } else {
       params.delete('profile')
     }
-    router.push(`/dashboard/feed?${params.toString()}`)
+    router.push(`/feed?${params.toString()}`)
   }
 
   return (

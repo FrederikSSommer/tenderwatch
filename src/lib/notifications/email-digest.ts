@@ -59,7 +59,7 @@ export async function sendDailyDigest({
     body += lowRelevance.map(renderTender).join('\n')
   }
 
-  body += `\n\nView all matches on your dashboard: ${process.env.NEXT_PUBLIC_APP_URL}/dashboard/feed\n\nTenderWatch · Unsubscribe: ${process.env.NEXT_PUBLIC_APP_URL}/dashboard/settings`
+  body += `\n\nView all matches on your dashboard: ${process.env.NEXT_PUBLIC_APP_URL}/feed\n\nTenderWatch · Unsubscribe: ${process.env.NEXT_PUBLIC_APP_URL}/settings`
 
   const { error } = await getResend().emails.send({
     from: 'TenderWatch <alerts@tenderwatch.dk>',

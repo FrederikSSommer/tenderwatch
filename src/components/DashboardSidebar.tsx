@@ -33,7 +33,7 @@ export function DashboardSidebar({
 }) {
   const pathname = usePathname()
   const router = useRouter()
-  const prefix = isDemo ? '/demo' : '/dashboard'
+  const prefix = isDemo ? '/demo' : ''
 
   const navigation = [
     ...baseNavigation.map(item => ({ ...item, href: `${prefix}${item.path}` })),
@@ -91,7 +91,7 @@ export function DashboardSidebar({
         )}
         {!isDemo && plan === 'free' && (
           <Link
-            href="/dashboard/settings?tab=billing"
+            href="/settings?tab=billing"
             className="flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
           >
             <Zap className="h-4 w-4" />

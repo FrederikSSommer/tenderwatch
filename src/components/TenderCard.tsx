@@ -45,7 +45,7 @@ export function TenderCard({
   matchId,
 }: TenderCardProps) {
   const pathname = usePathname()
-  const prefix = pathname.startsWith('/demo') ? '/demo' : '/dashboard'
+  const prefix = pathname.startsWith('/demo') ? '/demo' : ''
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 hover:border-gray-300 transition-colors">
