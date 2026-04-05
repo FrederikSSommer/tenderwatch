@@ -28,33 +28,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ summary: tender.ai_summary })
   }
 
-  // Check subscription limits
-  const { data: subscription } = await supabase
-    .from('subscriptions')
-    .select('plan')
-    .eq('user_id', user.id)
-    .single()
-
-  const plan = subscription?.plan ?? 'free'
-  if (plan === 'free') {
-    return NextResponse.json({ error: 'Upgrade to Starter to use AI summaries' }, { status: 403 })
-  }
-
-  if (plan === 'starter') {
-    const startOfMonth = new Date()
-    startOfMonth.setDate(1)
-    startOfMonth.setHours(0, 0, 0, 0)
-
-    const { count } = await supabase
-      .from('tenders')
-      .select('id', { count: 'exact', head: true })
-      .not('ai_summary', 'is', null)
-      .gte('ai_summary_generated_at', startOfMonth.toISOString())
-
-    if ((count ?? 0) >= 30) {
-      return NextResponse.json({ error: 'Monthly AI summary limit reached. Upgrade to Professional for unlimited.' }, { status: 403 })
-    }
-  }
+  // TODO: Re-enable plan limits when Stripe is connected
+  // For prototype: all features unlocked
 
   try {
     const summary = await summarizeTender({

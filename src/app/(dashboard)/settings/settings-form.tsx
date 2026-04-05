@@ -53,39 +53,12 @@ export function SettingsForm({ email, company, subscription }: SettingsFormProps
       </section>
 
       <section>
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Billing</h2>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Plan</h2>
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-gray-900 capitalize">{plan} plan</p>
-              <p className="text-sm text-gray-500 mt-1">
-                {plan === 'free' && 'Browse tenders for free'}
-                {plan === 'starter' && '1 profile · 30 AI summaries/month · Daily digest'}
-                {plan === 'professional' && '5 profiles · Unlimited AI · Calendar & export'}
-              </p>
-              {subscription?.current_period_end && (
-                <p className="text-xs text-gray-400 mt-1">
-                  Renews: {new Date(subscription.current_period_end).toLocaleDateString()}
-                </p>
-              )}
-            </div>
-            {plan === 'free' && (
-              <a
-                href="/api/checkout?plan=starter"
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-              >
-                Upgrade to Starter
-              </a>
-            )}
-            {plan === 'starter' && (
-              <a
-                href="/api/checkout?plan=professional"
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-              >
-                Upgrade to Professional
-              </a>
-            )}
-          </div>
+          <p className="font-medium text-gray-900 capitalize">{plan} plan</p>
+          <p className="text-sm text-gray-500 mt-1">
+            All features unlocked during prototype phase.
+          </p>
         </div>
       </section>
     </div>

@@ -45,13 +45,13 @@ export async function GET(request: NextRequest) {
 
       if (!profiles || profiles.length === 0) continue
 
-      const { data: sub } = await supabase
-        .from('subscriptions')
-        .select('plan, status')
-        .eq('user_id', userId)
-        .single()
-
-      if (!sub || sub.plan === 'free' || sub.status !== 'active') continue
+      // TODO: Re-enable plan check when Stripe is connected
+      // const { data: sub } = await supabase
+      //   .from('subscriptions')
+      //   .select('plan, status')
+      //   .eq('user_id', userId)
+      //   .single()
+      // if (!sub || sub.plan === 'free' || sub.status !== 'active') continue
 
       const tenderIds = userMatchList.map(m => m.tender_id)
       const { data: tenders } = await supabase

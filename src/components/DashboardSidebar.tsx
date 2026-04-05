@@ -15,20 +15,37 @@ import {
 } from 'lucide-react'
 import { clsx } from 'clsx'
 
-const navigation = [
-  { name: 'Tender Feed', href: '/dashboard/feed', icon: LayoutDashboard },
-  { name: 'Profiles', href: '/dashboard/profiles', icon: Target },
-  { name: 'Bookmarks', href: '/dashboard/bookmarks', icon: Bookmark },
-  { name: 'Calendar', href: '/dashboard/calendar', icon: Calendar },
-  { name: 'Settings', href: '/dashboard/settings', icon: Settings },
+const baseNavigation = [
+  { name: 'Tender Feed', path: '/feed', icon: LayoutDashboard },
+  { name: 'Profiles', path: '/profiles', icon: Target },
+  { name: 'Bookmarks', path: '/bookmarks', icon: Bookmark },
+  { name: 'Calendar', path: '/calendar', icon: Calendar },
 ]
 
-export function DashboardSidebar({ userEmail, plan }: { userEmail: string; plan: string }) {
+export function DashboardSidebar({
+  userEmail,
+  plan,
+  isDemo = false,
+}: {
+  userEmail: string
+  plan: string
+  isDemo?: boolean
+}) {
   const pathname = usePathname()
   const router = useRouter()
-  const supabase = createClient()
+  const prefix = isDemo ? '/demo' : '/dashboard'
+
+  const navigation = [
+    ...baseNavigation.map(item => ({ ...item, href: `${prefix}${item.path}` })),
+    ...(!isDemo ? [{ name: 'Settings', path: '/settings', href: `${prefix}/settings`, icon: Settings }] : []),
+  ]
 
   async function handleSignOut() {
+    if (isDemo) {
+      router.push('/')
+      return
+    }
+    const supabase = createClient()
     await supabase.auth.signOut()
     router.push('/')
   }
@@ -63,7 +80,16 @@ export function DashboardSidebar({ userEmail, plan }: { userEmail: string; plan:
       </nav>
 
       <div className="border-t border-gray-200 p-4 space-y-3">
-        {plan === 'free' && (
+        {isDemo && (
+          <Link
+            href="/signup"
+            className="flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
+          >
+            <Zap className="h-4 w-4" />
+            Sign up free
+          </Link>
+        )}
+        {!isDemo && plan === 'free' && (
           <Link
             href="/dashboard/settings?tab=billing"
             className="flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
@@ -77,7 +103,7 @@ export function DashboardSidebar({ userEmail, plan }: { userEmail: string; plan:
           <button
             onClick={handleSignOut}
             className="text-gray-400 hover:text-gray-600"
-            title="Sign out"
+            title={isDemo ? 'Exit demo' : 'Sign out'}
           >
             <LogOut className="h-4 w-4" />
           </button>

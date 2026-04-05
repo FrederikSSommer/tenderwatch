@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { formatDeadline } from '@/lib/utils/date'
 import { formatEUR } from '@/lib/utils/currency'
 import { Sparkles } from 'lucide-react'
@@ -43,6 +44,9 @@ export function TenderCard({
   bookmarked,
   matchId,
 }: TenderCardProps) {
+  const pathname = usePathname()
+  const prefix = pathname.startsWith('/demo') ? '/demo' : '/dashboard'
+
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 hover:border-gray-300 transition-colors">
       <div className="flex items-start justify-between gap-4">
@@ -53,7 +57,7 @@ export function TenderCard({
               {Math.round(relevanceScore)}
             </span>
             <Link
-              href={`/dashboard/tender/${tender.id}`}
+              href={`${prefix}/tender/${tender.id}`}
               className="text-base font-semibold text-gray-900 hover:text-blue-600 truncate"
             >
               {tender.title}
@@ -88,13 +92,13 @@ export function TenderCard({
 
         <div className="flex flex-col items-center gap-2">
           <Link
-            href={`/dashboard/tender/${tender.id}`}
+            href={`${prefix}/tender/${tender.id}`}
             className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
           >
             View
           </Link>
           <Link
-            href={`/dashboard/tender/${tender.id}?summary=true`}
+            href={`${prefix}/tender/${tender.id}?summary=true`}
             className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50 flex items-center gap-1"
           >
             <Sparkles className="h-3 w-3" />

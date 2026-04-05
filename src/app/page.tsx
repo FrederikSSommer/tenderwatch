@@ -40,6 +40,12 @@ export default function LandingPage() {
               Start free — find tenders now
               <ArrowRight className="h-5 w-5" />
             </a>
+            <a
+              href="/demo/feed"
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-6 py-3 text-base font-semibold text-gray-700 hover:bg-gray-50"
+            >
+              Try the demo
+            </a>
           </div>
         </div>
       </section>

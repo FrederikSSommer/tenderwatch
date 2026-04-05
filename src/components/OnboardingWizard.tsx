@@ -68,9 +68,10 @@ export function OnboardingWizard() {
       country_code: country,
     })
 
+    // TODO: Change to 'free' when Stripe is connected
     await supabase.from('subscriptions').insert({
       user_id: user.id,
-      plan: 'free',
+      plan: 'professional',
       status: 'active',
     })
 
