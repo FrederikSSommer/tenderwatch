@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { BackfillButton } from '@/components/BackfillButton'
 
 interface SettingsFormProps {
   email: string
@@ -50,6 +51,11 @@ export function SettingsForm({ email, company, subscription }: SettingsFormProps
             {saving ? 'Saving...' : 'Save changes'}
           </button>
         </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Historical tenders</h2>
+        <BackfillButton />
       </section>
 
       <section>

@@ -4,7 +4,8 @@ import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { KeywordInput } from './KeywordInput'
-import { Loader2, ArrowRight, ArrowLeft, Sparkles } from 'lucide-react'
+import { BackfillButton } from './BackfillButton'
+import { Loader2, ArrowRight, ArrowLeft, Sparkles, CheckCircle } from 'lucide-react'
 
 const COUNTRIES = [
   { code: 'DK', name: 'Denmark' },
@@ -37,6 +38,7 @@ export function OnboardingWizard() {
 
   const [minValue, setMinValue] = useState('')
   const [maxValue, setMaxValue] = useState('')
+  const [profileCreated, setProfileCreated] = useState(false)
 
   async function suggestCpvCodes() {
     setSuggestingCpv(true)
@@ -87,7 +89,8 @@ export function OnboardingWizard() {
     })
 
     setLoading(false)
-    router.push('/feed')
+    setProfileCreated(true)
+    setStep(5)
   }
 
   function nextStep() {
@@ -100,7 +103,7 @@ export function OnboardingWizard() {
   return (
     <div className="max-w-xl mx-auto">
       <div className="flex items-center gap-2 mb-8">
-        {[1, 2, 3, 4].map((s) => (
+        {[1, 2, 3, 4, 5].map((s) => (
           <div
             key={s}
             className={`flex-1 h-1.5 rounded-full ${s <= step ? 'bg-blue-600' : 'bg-gray-200'}`}
@@ -248,6 +251,20 @@ export function OnboardingWizard() {
         </div>
       )}
 
+      {step === 5 && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 mb-2">
+            <CheckCircle className="h-5 w-5 text-green-600" />
+            <h2 className="text-xl font-bold text-gray-900">Profile created!</h2>
+          </div>
+          <p className="text-sm text-gray-600">
+            Your daily feed will update automatically every morning. But you can also search for
+            tenders published before you signed up — choose how far back to look:
+          </p>
+          <BackfillButton />
+        </div>
+      )}
+
       <div className="mt-8 flex items-center justify-between">
         {step > 1 ? (
           <button
@@ -268,7 +285,7 @@ export function OnboardingWizard() {
             Continue
             <ArrowRight className="h-4 w-4" />
           </button>
-        ) : (
+        ) : step === 4 ? (
           <button
             onClick={handleComplete}
             disabled={loading}
@@ -276,6 +293,14 @@ export function OnboardingWizard() {
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             Create my profile
+          </button>
+        ) : (
+          <button
+            onClick={() => router.push('/feed')}
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
+          >
+            Go to my feed
+            <ArrowRight className="h-4 w-4" />
           </button>
         )}
       </div>
