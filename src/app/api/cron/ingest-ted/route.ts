@@ -29,42 +29,46 @@ export async function GET(request: NextRequest) {
     while (hasMore) {
       const response = await tedClient.fetchRecentContractNotices(since, page)
 
-      if (!response.results || response.results.length === 0) {
+      if (!response.notices || response.notices.length === 0) {
         hasMore = false
         break
       }
 
-      const parsed = response.results.map(parseTEDNotice)
+      const parsed = response.notices
+        .map(parseTEDNotice)
+        .filter((t): t is NonNullable<typeof t> => t !== null)
 
-      const { error } = await supabase
-        .from('tenders')
-        .upsert(
-          parsed.map(t => ({
-            source: t.source as 'ted',
-            external_id: t.external_id,
-            title: t.title,
-            description: t.description,
-            buyer_name: t.buyer_name,
-            buyer_country: t.buyer_country,
-            cpv_codes: t.cpv_codes,
-            procedure_type: t.procedure_type,
-            tender_type: t.tender_type,
-            estimated_value_eur: t.estimated_value_eur,
-            currency: t.currency,
-            submission_deadline: t.submission_deadline,
-            publication_date: t.publication_date,
-            document_url: t.document_url,
-            ted_url: t.ted_url,
-            language: t.language,
-            raw_data: t.raw_data,
-          })),
-          { onConflict: 'source,external_id' }
-        )
+      if (parsed.length > 0) {
+        const { error } = await supabase
+          .from('tenders')
+          .upsert(
+            parsed.map(t => ({
+              source: t.source as 'ted',
+              external_id: t.external_id,
+              title: t.title,
+              description: t.description,
+              buyer_name: t.buyer_name,
+              buyer_country: t.buyer_country,
+              cpv_codes: t.cpv_codes,
+              procedure_type: t.procedure_type,
+              tender_type: t.tender_type,
+              estimated_value_eur: t.estimated_value_eur,
+              currency: t.currency,
+              submission_deadline: t.submission_deadline,
+              publication_date: t.publication_date,
+              document_url: t.document_url,
+              ted_url: t.ted_url,
+              language: t.language,
+              raw_data: t.raw_data,
+            })),
+            { onConflict: 'source,external_id' }
+          )
 
-      if (error) console.error('Upsert error:', error)
+        if (error) console.error('Upsert error:', error)
+        totalIngested += parsed.length
+      }
 
-      totalIngested += parsed.length
-      hasMore = response.results.length === 100
+      hasMore = response.notices.length === 100
       page++
     }
 

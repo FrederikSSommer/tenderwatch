@@ -15,6 +15,19 @@ const MAX_DAYS = 90
 const MATCH_THRESHOLD = 20
 const TED_API_BASE = 'https://api.ted.europa.eu/v3'
 
+const TED_FIELDS = [
+  'notice-title',
+  'description-glo',
+  'organisation-country-buyer',
+  'buyer-name',
+  'deadline-receipt-tender-date-lot',
+  'classification-cpv',
+  'estimated-value-lot',
+  'publication-date',
+  'notice-type',
+  'contract-nature',
+]
+
 interface TenderInsert {
   source: 'ted'
   external_id: string
@@ -35,128 +48,120 @@ interface TenderInsert {
   raw_data: unknown
 }
 
-// Safely extract a nested value from an object
-function dig(obj: unknown, ...keys: string[]): unknown {
-  let current = obj
-  for (const key of keys) {
-    if (current == null || typeof current !== 'object') return undefined
-    current = (current as Record<string, unknown>)[key]
+// Extract title — notice-title is a multilingual object { eng: "...", dan: "...", ... }
+function extractTitle(titleObj: unknown): string {
+  if (!titleObj || typeof titleObj !== 'object') return 'Untitled'
+  const t = titleObj as Record<string, string>
+  // Prefer English, then Danish, then first available
+  return t['eng'] || t['dan'] || Object.values(t)[0] || 'Untitled'
+}
+
+// Extract description — same multilingual format
+function extractDescription(descObj: unknown): string | null {
+  if (!descObj || typeof descObj !== 'object') return null
+  if (Array.isArray(descObj)) {
+    // description-glo can be an array of multilingual objects
+    return descObj.map(d => extractTitle(d)).filter(Boolean).join(' ') || null
   }
-  return current
+  const d = descObj as Record<string, string>
+  return d['eng'] || d['dan'] || Object.values(d)[0] || null
 }
 
-function safeString(val: unknown): string | null {
-  if (val == null) return null
-  if (typeof val === 'string') return val
-  if (Array.isArray(val) && val.length > 0) return String(val[0])
-  return String(val)
-}
-
-// Parse a TED API v3 notice into our DB format — handles multiple response shapes
 function parseNotice(raw: Record<string, unknown>): TenderInsert | null {
   try {
-    // Try v3 format fields first, fall back to legacy field codes
-    const externalId =
-      safeString(raw['publication-number']) ||
-      safeString(raw['ND']) ||
-      safeString(raw['notice-id']) ||
-      safeString(raw['id'])
+    const pubNumber = raw['publication-number'] as string | undefined
+    if (!pubNumber) return null
 
-    if (!externalId) return null
+    const title = extractTitle(raw['notice-title'])
 
-    const title =
-      safeString(raw['title']) ||
-      safeString(dig(raw, 'title-text', 'value')) ||
-      safeString(raw['TI']) ||
-      'Untitled'
+    const description = extractDescription(raw['description-glo'])
 
-    const description =
-      safeString(raw['description']) ||
-      safeString(dig(raw, 'short-description', 'value')) ||
-      null
+    // Buyer name — can be string or array
+    const buyerNameRaw = raw['buyer-name']
+    const buyerName = Array.isArray(buyerNameRaw)
+      ? (buyerNameRaw[0] as string) || null
+      : typeof buyerNameRaw === 'string'
+        ? buyerNameRaw
+        : null
 
-    const buyerName =
-      safeString(raw['buyer-name']) ||
-      safeString(dig(raw, 'organisation', 'name')) ||
-      safeString(raw['AU']) ||
-      null
+    // Country — array of country codes
+    const countryRaw = raw['organisation-country-buyer']
+    const buyerCountry = Array.isArray(countryRaw)
+      ? (countryRaw[0] as string) || null
+      : typeof countryRaw === 'string'
+        ? countryRaw
+        : null
 
-    const buyerCountry =
-      safeString(raw['buyer-country']) ||
-      safeString(dig(raw, 'organisation', 'country')) ||
-      safeString(raw['CY']) ||
-      null
+    // CPV codes — array, may have duplicates
+    const cpvRaw = raw['classification-cpv']
+    const cpvCodes = Array.isArray(cpvRaw)
+      ? [...new Set(cpvRaw.map(c => String(c).replace(/-\d$/, '')))]
+      : []
 
-    // CPV codes — various formats
-    let cpvCodes: string[] = []
-    const rawCpv = raw['cpv-codes'] || raw['cpv'] || raw['OC'] || raw['classification']
-    if (Array.isArray(rawCpv)) {
-      cpvCodes = rawCpv.map((c) => String(typeof c === 'object' ? (c as Record<string, unknown>).code || c : c).replace(/-\d$/, ''))
-    } else if (typeof rawCpv === 'string') {
-      cpvCodes = [rawCpv.replace(/-\d$/, '')]
+    // Estimated value
+    const valueRaw = raw['estimated-value-lot']
+    let estimatedValue: number | null = null
+    if (typeof valueRaw === 'number') {
+      estimatedValue = valueRaw
+    } else if (Array.isArray(valueRaw) && valueRaw.length > 0) {
+      estimatedValue = typeof valueRaw[0] === 'number' ? valueRaw[0] : parseFloat(String(valueRaw[0])) || null
     }
 
-    const procedureType =
-      safeString(raw['procedure-type']) || safeString(raw['PR']) || null
-
-    const tenderType =
-      safeString(raw['notice-type']) || safeString(raw['NC']) || null
-
-    // Value
-    const estimatedValue =
-      (raw['estimated-value'] as number) ||
-      (raw['TVH'] as number) ||
-      (raw['TVL'] as number) ||
-      null
-
     // Deadline
+    const deadlineRaw = raw['deadline-receipt-tender-date-lot']
     let deadline: string | null = null
-    const rawDeadline = raw['submission-deadline'] || raw['deadline'] || raw['DT']
-    if (rawDeadline) {
-      try {
-        deadline = new Date(String(rawDeadline)).toISOString()
-      } catch {
-        deadline = null
+    if (deadlineRaw) {
+      const dl = Array.isArray(deadlineRaw) ? deadlineRaw[0] : deadlineRaw
+      if (dl) {
+        try { deadline = new Date(String(dl)).toISOString() } catch { /* skip */ }
       }
     }
 
-    // Publication date
-    const rawPubDate = raw['publication-date'] || raw['DD'] || raw['dispatch-date']
+    // Publication date — "2026-03-02+01:00" format
+    const pubDateRaw = raw['publication-date']
     let pubDate: string
-    if (rawPubDate) {
-      const d = new Date(String(rawPubDate))
-      pubDate = isNaN(d.getTime()) ? new Date().toISOString().split('T')[0] : d.toISOString().split('T')[0]
+    if (pubDateRaw) {
+      const dateStr = String(pubDateRaw).split('+')[0].split('T')[0]
+      const d = new Date(dateStr)
+      pubDate = isNaN(d.getTime()) ? new Date().toISOString().split('T')[0] : dateStr
     } else {
       pubDate = new Date().toISOString().split('T')[0]
     }
 
+    // Notice/contract type
+    const noticeType = typeof raw['notice-type'] === 'string' ? raw['notice-type'] : null
+    const contractNature = Array.isArray(raw['contract-nature'])
+      ? (raw['contract-nature'][0] as string) || null
+      : typeof raw['contract-nature'] === 'string'
+        ? raw['contract-nature']
+        : null
+
     return {
       source: 'ted',
-      external_id: externalId,
+      external_id: pubNumber,
       title,
       description,
       buyer_name: buyerName,
       buyer_country: buyerCountry,
       cpv_codes: cpvCodes,
-      procedure_type: procedureType,
-      tender_type: tenderType,
+      procedure_type: contractNature,
+      tender_type: noticeType,
       estimated_value_eur: estimatedValue,
       currency: 'EUR',
       submission_deadline: deadline,
       publication_date: pubDate,
       document_url: null,
-      ted_url: `https://ted.europa.eu/en/notice/-/${externalId}`,
-      language: safeString(raw['OL']) || safeString(raw['language']) || 'EN',
+      ted_url: `https://ted.europa.eu/en/notice/-/detail/${pubNumber}`,
+      language: 'EN',
       raw_data: raw,
     }
   } catch (err) {
-    console.error('Failed to parse notice:', err, raw)
+    console.error('Failed to parse TED notice:', err)
     return null
   }
 }
 
 export async function POST(request: NextRequest) {
-  // Auth check
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
@@ -181,12 +186,11 @@ export async function POST(request: NextRequest) {
   try {
     while (hasMore && page <= 5) {
       const searchBody = {
-        query: `PD>=${dateStr} AND TD=[3]`,
-        pageSize: 100,
+        query: `PD>=${dateStr}`,
+        fields: TED_FIELDS,
+        limit: 100,
         page,
         scope: 2,
-        sortField: 'DD',
-        sortOrder: 'desc',
       }
 
       const tedResponse = await fetch(`${TED_API_BASE}/notices/search`, {
@@ -197,27 +201,20 @@ export async function POST(request: NextRequest) {
 
       if (!tedResponse.ok) {
         const text = await tedResponse.text().catch(() => 'no body')
-        errors.push(`TED API returned ${tedResponse.status}: ${text.slice(0, 200)}`)
+        errors.push(`TED API returned ${tedResponse.status}: ${text.slice(0, 300)}`)
         break
       }
 
       const tedData = await tedResponse.json()
-
-      // Handle different response shapes
-      const results: Record<string, unknown>[] =
-        tedData.results || tedData.notices || tedData.data || []
+      const results: Record<string, unknown>[] = tedData.notices || []
 
       if (!Array.isArray(results) || results.length === 0) {
-        // If first page is empty, there are no results at all
-        if (page === 1) {
-          errors.push(`TED returned no results. Response keys: ${Object.keys(tedData).join(', ')}`)
-        }
         hasMore = false
         break
       }
 
       const parsed = results
-        .map((notice) => parseNotice(notice))
+        .map(parseNotice)
         .filter((t): t is TenderInsert => t !== null)
 
       if (parsed.length > 0) {
@@ -248,14 +245,12 @@ export async function POST(request: NextRequest) {
 
   if (!profiles || profiles.length === 0) {
     return NextResponse.json({
-      success: true,
+      success: totalIngested > 0,
       ingested: totalIngested,
       matched: 0,
       days,
       errors: errors.length > 0 ? errors : undefined,
-      message: totalIngested > 0
-        ? 'Tenders ingested but no active profiles to match against.'
-        : 'No active profiles found.',
+      message: 'No active profiles to match against.',
     })
   }
 
@@ -308,7 +303,6 @@ export async function POST(request: NextRequest) {
     }
 
     if (matches.length > 0) {
-      // Upsert in batches of 500 to avoid payload limits
       for (let i = 0; i < matches.length; i += 500) {
         const batch = matches.slice(i, i + 500)
         const { error } = await serviceClient.from('matches').upsert(
@@ -322,7 +316,7 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({
-    success: errors.length === 0 || totalIngested > 0 || totalMatches > 0,
+    success: errors.length === 0 || totalIngested > 0,
     ingested: totalIngested,
     matched: totalMatches,
     days,

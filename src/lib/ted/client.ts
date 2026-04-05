@@ -1,6 +1,22 @@
-import { TEDSearchParams, TEDSearchResponse, TEDNotice } from './types'
-
 const TED_API_BASE = 'https://api.ted.europa.eu/v3'
+
+const TED_FIELDS = [
+  'notice-title',
+  'description-glo',
+  'organisation-country-buyer',
+  'buyer-name',
+  'deadline-receipt-tender-date-lot',
+  'classification-cpv',
+  'estimated-value-lot',
+  'publication-date',
+  'notice-type',
+  'contract-nature',
+]
+
+export interface TEDSearchResponse {
+  notices: Record<string, unknown>[]
+  total?: number
+}
 
 export class TEDClient {
   private lastRequestTime = 0
@@ -17,16 +33,15 @@ export class TEDClient {
     this.lastRequestTime = Date.now()
   }
 
-  async search(params: TEDSearchParams): Promise<TEDSearchResponse> {
+  async search(query: string, page = 1, limit = 100): Promise<TEDSearchResponse> {
     await this.throttle()
 
     const searchBody = {
-      query: params.q,
-      pageSize: params.pageSize ?? 100,
-      page: params.pageNum ?? 1,
-      scope: params.scope ?? 2,
-      sortField: params.sortField ?? 'DD',
-      sortOrder: params.sortOrder ?? 'desc',
+      query,
+      fields: TED_FIELDS,
+      limit,
+      page,
+      scope: 2,
     }
 
     const response = await fetch(`${TED_API_BASE}/notices/search`, {
@@ -44,27 +59,12 @@ export class TEDClient {
     return response.json()
   }
 
-  async getNotice(noticeId: string): Promise<TEDNotice> {
-    await this.throttle()
-    const response = await fetch(`${TED_API_BASE}/notices/${noticeId}`)
-    if (!response.ok) {
-      throw new Error(`TED API error: ${response.status}`)
-    }
-    return response.json()
-  }
-
   async fetchRecentContractNotices(
     since: Date,
     page = 1
   ): Promise<TEDSearchResponse> {
     const dateStr = since.toISOString().split('T')[0].replace(/-/g, '')
-    return this.search({
-      q: `PD>=${dateStr} AND TD=[3]`,
-      pageNum: page,
-      pageSize: 100,
-      sortField: 'DD',
-      sortOrder: 'desc',
-    })
+    return this.search(`PD>=${dateStr}`, page, 100)
   }
 }
 
