@@ -378,32 +378,52 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
     }
 
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    if (!user) {
+      setError('Not logged in. Please sign in first.')
+      setLoading(false)
+      return
+    }
 
-    await supabase.from('companies').insert({
-      user_id: user.id,
-      name: companyName || description.slice(0, 50),
-      country_code: country,
-    })
+    try {
+      // Upsert company (ignore if already exists)
+      const { error: companyErr } = await supabase.from('companies').upsert({
+        user_id: user.id,
+        name: companyName || description.slice(0, 50),
+        country_code: country,
+      }, { onConflict: 'user_id' })
+      if (companyErr) console.warn('Company upsert:', companyErr.message)
 
-    await supabase.from('subscriptions').insert({
-      user_id: user.id,
-      plan: 'professional',
-      status: 'active',
-    })
+      // Upsert subscription (ignore if already exists)
+      const { error: subErr } = await supabase.from('subscriptions').upsert({
+        user_id: user.id,
+        plan: 'professional',
+        status: 'active',
+      }, { onConflict: 'user_id' })
+      if (subErr) console.warn('Subscription upsert:', subErr.message)
 
-    const vr = VALUE_RANGES.find(v => v.id === valueRange)
+      const vr = VALUE_RANGES.find(v => v.id === valueRange)
 
-    await supabase.from('monitoring_profiles').insert({
-      user_id: user.id,
-      name: generatedProfile.profile_name || `${companyName} profile`,
-      cpv_codes: generatedProfile.cpv_codes,
-      keywords: generatedProfile.keywords,
-      exclude_keywords: generatedProfile.exclude_keywords,
-      countries: generatedProfile.countries,
-      min_value_eur: generatedProfile.min_value_eur ?? (vr?.range?.[0] ?? null),
-      max_value_eur: generatedProfile.max_value_eur ?? (vr?.range?.[1] ?? null),
-    })
+      const { error: profileErr } = await supabase.from('monitoring_profiles').insert({
+        user_id: user.id,
+        name: generatedProfile.profile_name || `${companyName} profile`,
+        cpv_codes: generatedProfile.cpv_codes,
+        keywords: generatedProfile.keywords,
+        exclude_keywords: generatedProfile.exclude_keywords,
+        countries: generatedProfile.countries,
+        min_value_eur: generatedProfile.min_value_eur ?? (vr?.range?.[0] ?? null),
+        max_value_eur: generatedProfile.max_value_eur ?? (vr?.range?.[1] ?? null),
+      })
+
+      if (profileErr) {
+        setError(`Failed to save profile: ${profileErr.message}`)
+        setLoading(false)
+        return
+      }
+    } catch (err) {
+      setError(`Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      setLoading(false)
+      return
+    }
 
     setLoading(false)
     setPhase('done')
