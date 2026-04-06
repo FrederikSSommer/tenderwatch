@@ -84,7 +84,7 @@ function parseTender(n: Record<string, unknown>) {
 }
 
 export async function POST(request: NextRequest) {
-  const { description, sectors, subsectors, countries } = await request.json()
+  const { description, sectors, subsectors, countries, buyers } = await request.json()
 
   const sinceDate = new Date()
   sinceDate.setDate(sinceDate.getDate() - 60)
@@ -152,7 +152,26 @@ keywords: 5-8 English keywords that would appear in relevant tender titles`
     queries.push(`PD>=${dateStr} AND (${kwFilter}) AND (${countryFilter})`)
   }
 
-  // Query 3: Keywords only (broadest)
+  // Query 3: Buyer-specific searches (most targeted for finding specific org tenders)
+  if (buyers && buyers.length > 0) {
+    for (const buyer of buyers.slice(0, 5)) {
+      const buyerName = typeof buyer === 'string' ? buyer : buyer.name
+      if (!buyerName) continue
+      // Search by buyer name with date filter
+      queries.push(`PD>=${dateStr} AND FT~"${buyerName}"`)
+    }
+    // Also try buyer + CPV combo
+    if (cpvPrefixes.length > 0) {
+      const cpvFilter = cpvPrefixes.slice(0, 3).map(c => `classification-cpv=${c}*`).join(' OR ')
+      for (const buyer of buyers.slice(0, 3)) {
+        const buyerName = typeof buyer === 'string' ? buyer : buyer.name
+        if (!buyerName) continue
+        queries.push(`PD>=${dateStr} AND FT~"${buyerName}" AND (${cpvFilter})`)
+      }
+    }
+  }
+
+  // Query 4: Keywords only (broadest)
   if (keywords.length > 0) {
     const kwFilter = keywords.slice(0, 3).map(k => `FT~"${k}"`).join(' OR ')
     queries.push(`PD>=${dateStr} AND (${kwFilter})`)
