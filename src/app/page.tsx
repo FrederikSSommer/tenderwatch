@@ -41,10 +41,11 @@ export default function LandingPage() {
               <ArrowRight className="h-5 w-5" />
             </a>
             <a
-              href="/demo/feed"
+              href="/try"
               className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-6 py-3 text-base font-semibold text-gray-700 hover:bg-gray-50"
             >
-              Try the demo
+              <Sparkles className="h-4 w-4" />
+              Build your profile
             </a>
           </div>
         </div>

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServerSupabaseClient } from '@/lib/supabase/server'
 import Anthropic from '@anthropic-ai/sdk'
 
 function getClient() {
@@ -31,10 +30,6 @@ function extractMultilingual(obj: unknown): string | null {
 }
 
 export async function POST(request: NextRequest) {
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
   const { description, sectors, subsectors, countries } = await request.json()
 
   // Step 1: Ask Claude to generate a TED search query

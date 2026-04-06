@@ -165,7 +165,7 @@ function TenderExampleCard({
 
 // ─── Main Wizard ──────────────────────────────────────────────────────
 
-export function OnboardingWizardV2() {
+export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean }) {
   const router = useRouter()
   const supabase = createClient()
 
@@ -320,6 +320,20 @@ export function OnboardingWizardV2() {
   async function saveProfile() {
     if (!generatedProfile) return
     setLoading(true)
+
+    if (isPublic) {
+      // Store profile in sessionStorage so we can save it after signup
+      const profileData = {
+        companyName,
+        country,
+        profile: generatedProfile,
+        valueRange,
+      }
+      sessionStorage.setItem('tenderwatch_pending_profile', JSON.stringify(profileData))
+      setLoading(false)
+      setPhase('done')
+      return
+    }
 
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
@@ -703,23 +717,49 @@ export function OnboardingWizardV2() {
             <div className="inline-flex items-center justify-center h-16 w-16 rounded-full bg-green-100 mb-4">
               <CheckCircle className="h-8 w-8 text-green-600" />
             </div>
-            <h2 className="text-xl font-bold text-gray-900">Profile created!</h2>
+            <h2 className="text-xl font-bold text-gray-900">
+              {isPublic ? 'Your profile is ready!' : 'Profile created!'}
+            </h2>
             <p className="text-sm text-gray-500 mt-2">
-              Your daily feed will update every morning. You can also backfill historical tenders now:
+              {isPublic
+                ? 'Sign up to activate your profile and start receiving matched tenders in your inbox every morning.'
+                : 'Your daily feed will update every morning. You can also backfill historical tenders now:'}
             </p>
           </div>
 
-          <BackfillButton />
-
-          <div className="mt-8 flex justify-center">
-            <button
-              onClick={() => router.push('/feed')}
-              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-3 text-sm font-semibold text-white hover:bg-blue-700"
-            >
-              Go to my feed
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
+          {isPublic ? (
+            <div className="space-y-4">
+              {generatedProfile && (
+                <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-600">
+                  <p className="font-medium text-gray-900 mb-2">Your profile: {generatedProfile.profile_name}</p>
+                  <p>{generatedProfile.cpv_codes.length} CPV codes, {generatedProfile.keywords.length} keywords, {generatedProfile.countries.length} countries</p>
+                </div>
+              )}
+              <div className="flex flex-col items-center gap-3">
+                <a
+                  href="/signup"
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-3 text-sm font-semibold text-white hover:bg-blue-700"
+                >
+                  Create account — activate my profile
+                  <ArrowRight className="h-4 w-4" />
+                </a>
+                <p className="text-xs text-gray-400">Free to start. Your profile will be saved automatically.</p>
+              </div>
+            </div>
+          ) : (
+            <>
+              <BackfillButton />
+              <div className="mt-8 flex justify-center">
+                <button
+                  onClick={() => router.push('/feed')}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-3 text-sm font-semibold text-white hover:bg-blue-700"
+                >
+                  Go to my feed
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
