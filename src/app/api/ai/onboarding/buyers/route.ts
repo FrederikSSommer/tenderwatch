@@ -17,16 +17,21 @@ Sectors: ${(sectors || []).join(', ')}
 Specific interests: ${(subsectors || []).join(', ')}
 Target countries: ${(countries || []).join(', ')}
 
-Generate 8-12 specific public sector organizations (ministries, agencies, municipalities, EU institutions) that regularly issue tenders in these areas. Include both the official name and a short English label.
+Generate 8-12 specific public sector organizations (ministries, agencies, municipalities, EU institutions) that regularly issue tenders in these areas.
+
+For each organization, provide:
+- The official name (as it appears on TED)
+- A short English label
+- 1-2 distinctive search keywords from the official name that would match on TED full-text search (a single unique word from the org name works best, e.g. "Forsvarsministeriets" for DALO)
 
 For Danish defence/military, include:
-- "Forsvarsministeriets Materiel- og Indkøbsstyrelse" (DALO - Danish Defence Acquisition)
-- "Forsvarets Koncernfælles Informatiktjeneste" (Danish Defence IT)
+- "Forsvarsministeriets Materiel- og Indkøbsstyrelse" with search term "Forsvarsministeriets"
+- "Forsvarets Koncernfælles Informatiktjeneste" with search term "Forsvarets Informatiktjeneste"
 
 Return ONLY a JSON array:
-[{"id": "unique-slug", "name": "Official organization name", "label": "Short English label", "country": "DK"}]
+[{"id": "unique-slug", "name": "Official organization name", "label": "Short English label", "country": "DK", "searchTerms": ["Forsvarsministeriets"]}]
 
-Focus on organizations that ACTUALLY publish on TED (EU procurement portal). Be specific — use real organization names, not generic categories.`
+Focus on organizations that ACTUALLY publish on TED (EU procurement portal). Use real organization names. The searchTerms should be distinctive words from the official name that can be used for full-text search on TED.`
 
   try {
     const message = await getClient().messages.create({

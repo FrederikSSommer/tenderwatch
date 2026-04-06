@@ -135,7 +135,39 @@ keywords: 5-8 English keywords that would appear in relevant tender titles`
 
   const queries: string[] = []
 
-  // Query 1: CPV-based (most reliable for finding relevant tenders)
+  // Query 1 (PRIORITY): Buyer-specific searches — run first so buyer tenders appear
+  if (buyers && buyers.length > 0) {
+    for (const buyer of buyers.slice(0, 6)) {
+      const searchTerms: string[] = buyer.searchTerms || []
+      const buyerCountry = COUNTRY_MAP[buyer.country] || buyer.country
+
+      // Use searchTerms if available (short distinctive keywords), fall back to splitting name
+      if (searchTerms.length > 0) {
+        const termFilter = searchTerms.map((t: string) => `FT~"${t}"`).join(' AND ')
+        if (buyerCountry) {
+          queries.push(`PD>=${dateStr} AND ${termFilter} AND organisation-country-buyer=${buyerCountry}`)
+        } else {
+          queries.push(`PD>=${dateStr} AND ${termFilter}`)
+        }
+      } else {
+        // Fall back: extract longest distinctive word from name (>5 chars, skip common words)
+        const name = typeof buyer === 'string' ? buyer : buyer.name
+        if (!name) continue
+        const skipWords = new Set(['and', 'the', 'for', 'of', 'de', 'des', 'du', 'og', 'for', 'der', 'die', 'und'])
+        const words = name.split(/[\s,.-]+/).filter((w: string) => w.length > 5 && !skipWords.has(w.toLowerCase()))
+        const searchWord = words[0]
+        if (searchWord) {
+          if (buyerCountry) {
+            queries.push(`PD>=${dateStr} AND FT~"${searchWord}" AND organisation-country-buyer=${buyerCountry}`)
+          } else {
+            queries.push(`PD>=${dateStr} AND FT~"${searchWord}"`)
+          }
+        }
+      }
+    }
+  }
+
+  // Query 2: CPV-based with country filter
   if (cpvPrefixes.length > 0) {
     const cpvFilter = cpvPrefixes.slice(0, 4).map(c => `classification-cpv=${c}*`).join(' OR ')
     if (tedCountries.length > 0 && tedCountries.length <= 5) {
@@ -145,30 +177,11 @@ keywords: 5-8 English keywords that would appear in relevant tender titles`
     queries.push(`PD>=${dateStr} AND (${cpvFilter})`)
   }
 
-  // Query 2: Keyword full-text search per country
+  // Query 3: Keyword full-text search per country
   if (keywords.length > 0 && tedCountries.length > 0) {
     const kwFilter = keywords.slice(0, 4).map(k => `FT~"${k}"`).join(' OR ')
     const countryFilter = tedCountries.map((c: string) => `organisation-country-buyer=${c}`).join(' OR ')
     queries.push(`PD>=${dateStr} AND (${kwFilter}) AND (${countryFilter})`)
-  }
-
-  // Query 3: Buyer-specific searches (most targeted for finding specific org tenders)
-  if (buyers && buyers.length > 0) {
-    for (const buyer of buyers.slice(0, 5)) {
-      const buyerName = typeof buyer === 'string' ? buyer : buyer.name
-      if (!buyerName) continue
-      // Search by buyer name with date filter
-      queries.push(`PD>=${dateStr} AND FT~"${buyerName}"`)
-    }
-    // Also try buyer + CPV combo
-    if (cpvPrefixes.length > 0) {
-      const cpvFilter = cpvPrefixes.slice(0, 3).map(c => `classification-cpv=${c}*`).join(' OR ')
-      for (const buyer of buyers.slice(0, 3)) {
-        const buyerName = typeof buyer === 'string' ? buyer : buyer.name
-        if (!buyerName) continue
-        queries.push(`PD>=${dateStr} AND FT~"${buyerName}" AND (${cpvFilter})`)
-      }
-    }
   }
 
   // Query 4: Keywords only (broadest)
