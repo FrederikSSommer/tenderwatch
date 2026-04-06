@@ -90,21 +90,36 @@ export async function POST(request: NextRequest) {
   sinceDate.setDate(sinceDate.getDate() - 60)
   const dateStr = sinceDate.toISOString().split('T')[0].replace(/-/g, '')
 
+  // Map country codes to language names for native keyword generation
+  const COUNTRY_LANG: Record<string, string> = {
+    DK: 'Danish', NO: 'Norwegian', SE: 'Swedish', DE: 'German',
+    NL: 'Dutch', FI: 'Finnish', FR: 'French', PL: 'Polish',
+    ES: 'Spanish', IT: 'Italian', BE: 'French/Dutch',
+  }
+  const targetLangs = (countries || []).map((c: string) => COUNTRY_LANG[c]).filter(Boolean)
+  const langNote = targetLangs.length > 0
+    ? `\nIMPORTANT: Many tenders on TED are titled in the local language. Include keywords in ${targetLangs.join(', ')} as well. For example, Danish maritime tenders use words like "fartøj" (vessel), "værft" (shipyard), "marine", "sejlende" (sailing).`
+    : ''
+
   // Step 1: Ask Claude for CPV codes and keywords (NOT TED query syntax)
   const prompt = `You are an EU procurement expert. Based on these interests, suggest CPV codes and search keywords.
 
 Company: "${description}"
 Sectors: ${(sectors || []).join(', ')}
 Specific interests: ${(subsectors || []).join(', ')}
+Target countries: ${(countries || []).join(', ')}
+${langNote}
 
 Return ONLY a JSON object:
 {
   "cpv_2digit": ["34", "71", "50"],
-  "keywords": ["maritime", "naval", "ship design", "defence"]
+  "keywords": ["maritime", "naval", "ship design", "defence"],
+  "native_keywords": ["fartøj", "værft", "forsvar", "marine"]
 }
 
-cpv_2digit: 3-5 two-digit CPV division codes (the first 2 digits of relevant 8-digit CPV codes)
-keywords: 5-8 English keywords that would appear in relevant tender titles`
+cpv_2digit: 3-5 two-digit CPV division codes (the first 2 digits of relevant 8-digit CPV codes). Include 50 (repair/maintenance) if relevant.
+keywords: 5-8 English keywords that would appear in relevant tender titles
+native_keywords: 3-6 keywords in the local language(s) of the target countries that would appear in tender titles on TED`
 
   let cpvPrefixes: string[] = []
   let keywords: string[] = []
@@ -112,7 +127,7 @@ keywords: 5-8 English keywords that would appear in relevant tender titles`
   try {
     const message = await getClient().messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 300,
+      max_tokens: 400,
       messages: [{ role: 'user', content: prompt }],
     })
 
@@ -121,7 +136,8 @@ keywords: 5-8 English keywords that would appear in relevant tender titles`
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0])
       cpvPrefixes = parsed.cpv_2digit || []
-      keywords = parsed.keywords || []
+      // Combine English + native keywords for broader search
+      keywords = [...(parsed.keywords || []), ...(parsed.native_keywords || [])]
     }
   } catch {
     // If Claude fails, use a generic approach
