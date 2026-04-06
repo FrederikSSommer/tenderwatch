@@ -165,13 +165,14 @@ native_keywords: 3-6 keywords in the local language(s) of the target countries t
   // Build queries in priority tiers — each tier gets its own bucket to ensure diversity
   const queryTiers: string[][] = [[], [], [], []]
 
-  // Tier 0 (BEST): Buyer + topic keywords — e.g. DALO + "maritime" + "naval"
+  // Tier 0 (BEST): Buyer + topic keywords — use ALL keywords (English + native) for max coverage
   if (buyers && buyers.length > 0 && keywords.length > 0) {
+    // Use up to 8 keywords to cast a wide net within buyer results
+    const kwFilter = keywords.slice(0, 8).map(k => `FT~"${k}"`).join(' OR ')
     for (const buyer of buyers.slice(0, 4)) {
       const bf = getBuyerFilter(buyer as Record<string, unknown>)
       const buyerCountry = COUNTRY_MAP[(buyer as Record<string, unknown>).country as string] || (buyer as Record<string, unknown>).country
       if (!bf) continue
-      const kwFilter = keywords.slice(0, 3).map(k => `FT~"${k}"`).join(' OR ')
       if (buyerCountry) {
         queryTiers[0].push(`PD>=${dateStr} AND ${bf} AND (${kwFilter}) AND organisation-country-buyer=${buyerCountry}`)
       } else {
@@ -238,7 +239,9 @@ native_keywords: 3-6 keywords in the local language(s) of the target countries t
 
   for (let tier = 0; tier < queryTiers.length; tier++) {
     for (const query of queryTiers[tier]) {
-      const notices = await searchTED(query, 8)
+      // Tier 0 (buyer+topic) gets more results since they're most targeted
+      const fetchLimit = tier === 0 ? 15 : 8
+      const notices = await searchTED(query, fetchLimit)
       for (const notice of notices) {
         const id = notice['publication-number'] as string
         if (id && !seenIds.has(id)) {
@@ -250,8 +253,8 @@ native_keywords: 3-6 keywords in the local language(s) of the target countries t
     }
   }
 
-  // Interleave: take up to 6 from tier 0 (buyer+topic), 5 from tier 1 (topic), 3 from tier 2 (buyer-only), 1 from tier 3 (broad)
-  const limits = [6, 5, 3, 1]
+  // Interleave: take up to 8 from tier 0 (buyer+topic), 4 from tier 1 (topic), 2 from tier 2 (buyer-only), 1 from tier 3 (broad)
+  const limits = [8, 4, 2, 1]
   const allTenders: Record<string, unknown>[] = []
   for (let tier = 0; tier < tierResults.length; tier++) {
     const take = limits[tier]
