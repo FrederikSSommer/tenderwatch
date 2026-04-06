@@ -133,85 +133,120 @@ keywords: 5-8 English keywords that would appear in relevant tender titles`
     .map((c: string) => COUNTRY_MAP[c] || c)
     .filter(Boolean)
 
-  const queries: string[] = []
+  // Helper: extract buyer search filter from buyer object
+  function getBuyerFilter(buyer: Record<string, unknown>): string | null {
+    const searchTerms = buyer.searchTerms as string[] | undefined
+    if (searchTerms && searchTerms.length > 0) {
+      return searchTerms.map((t: string) => `FT~"${t}"`).join(' AND ')
+    }
+    const name = (typeof buyer === 'string' ? buyer : buyer.name) as string
+    if (!name) return null
+    const skipWords = new Set(['and', 'the', 'for', 'of', 'de', 'des', 'du', 'og', 'for', 'der', 'die', 'und'])
+    const words = name.split(/[\s,.-]+/).filter((w: string) => w.length > 5 && !skipWords.has(w.toLowerCase()))
+    return words[0] ? `FT~"${words[0]}"` : null
+  }
 
-  // Query 1 (PRIORITY): Buyer-specific searches — run first so buyer tenders appear
-  if (buyers && buyers.length > 0) {
-    for (const buyer of buyers.slice(0, 6)) {
-      const searchTerms: string[] = buyer.searchTerms || []
-      const buyerCountry = COUNTRY_MAP[buyer.country] || buyer.country
+  // Build queries in priority tiers — each tier gets its own bucket to ensure diversity
+  const queryTiers: string[][] = [[], [], [], []]
 
-      // Use searchTerms if available (short distinctive keywords), fall back to splitting name
-      if (searchTerms.length > 0) {
-        const termFilter = searchTerms.map((t: string) => `FT~"${t}"`).join(' AND ')
-        if (buyerCountry) {
-          queries.push(`PD>=${dateStr} AND ${termFilter} AND organisation-country-buyer=${buyerCountry}`)
-        } else {
-          queries.push(`PD>=${dateStr} AND ${termFilter}`)
-        }
+  // Tier 0 (BEST): Buyer + topic keywords — e.g. DALO + "maritime" + "naval"
+  if (buyers && buyers.length > 0 && keywords.length > 0) {
+    for (const buyer of buyers.slice(0, 4)) {
+      const bf = getBuyerFilter(buyer as Record<string, unknown>)
+      const buyerCountry = COUNTRY_MAP[(buyer as Record<string, unknown>).country as string] || (buyer as Record<string, unknown>).country
+      if (!bf) continue
+      const kwFilter = keywords.slice(0, 3).map(k => `FT~"${k}"`).join(' OR ')
+      if (buyerCountry) {
+        queryTiers[0].push(`PD>=${dateStr} AND ${bf} AND (${kwFilter}) AND organisation-country-buyer=${buyerCountry}`)
       } else {
-        // Fall back: extract longest distinctive word from name (>5 chars, skip common words)
-        const name = typeof buyer === 'string' ? buyer : buyer.name
-        if (!name) continue
-        const skipWords = new Set(['and', 'the', 'for', 'of', 'de', 'des', 'du', 'og', 'for', 'der', 'die', 'und'])
-        const words = name.split(/[\s,.-]+/).filter((w: string) => w.length > 5 && !skipWords.has(w.toLowerCase()))
-        const searchWord = words[0]
-        if (searchWord) {
-          if (buyerCountry) {
-            queries.push(`PD>=${dateStr} AND FT~"${searchWord}" AND organisation-country-buyer=${buyerCountry}`)
-          } else {
-            queries.push(`PD>=${dateStr} AND FT~"${searchWord}"`)
-          }
-        }
+        queryTiers[0].push(`PD>=${dateStr} AND ${bf} AND (${kwFilter})`)
       }
     }
   }
 
-  // Query 2: CPV-based with country filter
+  // Tier 0b: Buyer + CPV codes
+  if (buyers && buyers.length > 0 && cpvPrefixes.length > 0) {
+    const cpvFilter = cpvPrefixes.slice(0, 3).map(c => `classification-cpv=${c}*`).join(' OR ')
+    for (const buyer of buyers.slice(0, 3)) {
+      const bf = getBuyerFilter(buyer as Record<string, unknown>)
+      const buyerCountry = COUNTRY_MAP[(buyer as Record<string, unknown>).country as string] || (buyer as Record<string, unknown>).country
+      if (!bf) continue
+      if (buyerCountry) {
+        queryTiers[0].push(`PD>=${dateStr} AND ${bf} AND (${cpvFilter}) AND organisation-country-buyer=${buyerCountry}`)
+      } else {
+        queryTiers[0].push(`PD>=${dateStr} AND ${bf} AND (${cpvFilter})`)
+      }
+    }
+  }
+
+  // Tier 1: CPV-based with country filter (topic-relevant, no specific buyer)
   if (cpvPrefixes.length > 0) {
     const cpvFilter = cpvPrefixes.slice(0, 4).map(c => `classification-cpv=${c}*`).join(' OR ')
     if (tedCountries.length > 0 && tedCountries.length <= 5) {
       const countryFilter = tedCountries.map((c: string) => `organisation-country-buyer=${c}`).join(' OR ')
-      queries.push(`PD>=${dateStr} AND (${cpvFilter}) AND (${countryFilter})`)
+      queryTiers[1].push(`PD>=${dateStr} AND (${cpvFilter}) AND (${countryFilter})`)
     }
-    queries.push(`PD>=${dateStr} AND (${cpvFilter})`)
+    queryTiers[1].push(`PD>=${dateStr} AND (${cpvFilter})`)
   }
 
-  // Query 3: Keyword full-text search per country
+  // Tier 1b: Keyword search with country
   if (keywords.length > 0 && tedCountries.length > 0) {
     const kwFilter = keywords.slice(0, 4).map(k => `FT~"${k}"`).join(' OR ')
     const countryFilter = tedCountries.map((c: string) => `organisation-country-buyer=${c}`).join(' OR ')
-    queries.push(`PD>=${dateStr} AND (${kwFilter}) AND (${countryFilter})`)
+    queryTiers[1].push(`PD>=${dateStr} AND (${kwFilter}) AND (${countryFilter})`)
   }
 
-  // Query 4: Keywords only (broadest)
-  if (keywords.length > 0) {
-    const kwFilter = keywords.slice(0, 3).map(k => `FT~"${k}"`).join(' OR ')
-    queries.push(`PD>=${dateStr} AND (${kwFilter})`)
-  }
-
-  // Step 3: Fetch from TED with all queries
-  const allTenders: Record<string, unknown>[] = []
-  const seenIds = new Set<string>()
-
-  for (const query of queries) {
-    const notices = await searchTED(query, 8)
-    for (const notice of notices) {
-      const id = notice['publication-number'] as string
-      if (id && !seenIds.has(id)) {
-        seenIds.add(id)
-        allTenders.push(notice)
+  // Tier 2: Buyer-only (broad — all tenders from that org, no topic filter)
+  if (buyers && buyers.length > 0) {
+    for (const buyer of buyers.slice(0, 3)) {
+      const bf = getBuyerFilter(buyer as Record<string, unknown>)
+      const buyerCountry = COUNTRY_MAP[(buyer as Record<string, unknown>).country as string] || (buyer as Record<string, unknown>).country
+      if (!bf) continue
+      if (buyerCountry) {
+        queryTiers[2].push(`PD>=${dateStr} AND ${bf} AND organisation-country-buyer=${buyerCountry}`)
+      } else {
+        queryTiers[2].push(`PD>=${dateStr} AND ${bf}`)
       }
     }
-    // Rate limit
-    await new Promise(r => setTimeout(r, 300))
+  }
+
+  // Tier 3: Keywords only (broadest fallback)
+  if (keywords.length > 0) {
+    const kwFilter = keywords.slice(0, 3).map(k => `FT~"${k}"`).join(' OR ')
+    queryTiers[3].push(`PD>=${dateStr} AND (${kwFilter})`)
+  }
+
+  // Step 3: Fetch from TED — collect results per tier, then interleave for diversity
+  const tierResults: Record<string, unknown>[][] = [[], [], [], []]
+  const seenIds = new Set<string>()
+
+  for (let tier = 0; tier < queryTiers.length; tier++) {
+    for (const query of queryTiers[tier]) {
+      const notices = await searchTED(query, 8)
+      for (const notice of notices) {
+        const id = notice['publication-number'] as string
+        if (id && !seenIds.has(id)) {
+          seenIds.add(id)
+          tierResults[tier].push(notice)
+        }
+      }
+      await new Promise(r => setTimeout(r, 300))
+    }
+  }
+
+  // Interleave: take up to 6 from tier 0 (buyer+topic), 5 from tier 1 (topic), 3 from tier 2 (buyer-only), 1 from tier 3 (broad)
+  const limits = [6, 5, 3, 1]
+  const allTenders: Record<string, unknown>[] = []
+  for (let tier = 0; tier < tierResults.length; tier++) {
+    const take = limits[tier]
+    allTenders.push(...tierResults[tier].slice(0, take))
   }
 
   const tenders = allTenders.slice(0, 15).map(parseTender)
 
   return NextResponse.json({
     tenders,
-    queriesRun: queries.length,
+    queriesRun: queryTiers.flat().length,
     cpvPrefixes,
     keywords,
   })
