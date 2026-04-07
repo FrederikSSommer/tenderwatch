@@ -385,25 +385,45 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
     }
 
     try {
-      // Upsert company (ignore if already exists)
-      const { error: companyErr } = await supabase.from('companies').upsert({
-        user_id: user.id,
-        name: companyName || description.slice(0, 50),
-        country_code: country,
-      }, { onConflict: 'user_id' })
-      if (companyErr) console.warn('Company upsert:', companyErr.message)
+      // Check if company exists, create or update
+      const { data: existingCompany } = await supabase
+        .from('companies')
+        .select('id')
+        .eq('user_id', user.id)
+        .maybeSingle()
 
-      // Upsert subscription (ignore if already exists)
-      const { error: subErr } = await supabase.from('subscriptions').upsert({
-        user_id: user.id,
-        plan: 'professional',
-        status: 'active',
-      }, { onConflict: 'user_id' })
-      if (subErr) console.warn('Subscription upsert:', subErr.message)
+      if (existingCompany) {
+        await supabase.from('companies')
+          .update({ name: companyName || description.slice(0, 50), country_code: country })
+          .eq('id', existingCompany.id)
+      } else {
+        const { error: companyErr } = await supabase.from('companies').insert({
+          user_id: user.id,
+          name: companyName || description.slice(0, 50),
+          country_code: country,
+        })
+        if (companyErr) console.warn('Company insert:', companyErr.message)
+      }
+
+      // Check if subscription exists, create if not
+      const { data: existingSub } = await supabase
+        .from('subscriptions')
+        .select('id')
+        .eq('user_id', user.id)
+        .maybeSingle()
+
+      if (!existingSub) {
+        const { error: subErr } = await supabase.from('subscriptions').insert({
+          user_id: user.id,
+          plan: 'professional',
+          status: 'active',
+        })
+        if (subErr) console.warn('Subscription insert:', subErr.message)
+      }
 
       const vr = VALUE_RANGES.find(v => v.id === valueRange)
 
-      const { error: profileErr } = await supabase.from('monitoring_profiles').insert({
+      const { data: newProfile, error: profileErr } = await supabase.from('monitoring_profiles').insert({
         user_id: user.id,
         name: generatedProfile.profile_name || `${companyName} profile`,
         cpv_codes: generatedProfile.cpv_codes,
@@ -412,13 +432,15 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
         countries: generatedProfile.countries,
         min_value_eur: generatedProfile.min_value_eur ?? (vr?.range?.[0] ?? null),
         max_value_eur: generatedProfile.max_value_eur ?? (vr?.range?.[1] ?? null),
-      })
+      }).select('id').single()
 
       if (profileErr) {
         setError(`Failed to save profile: ${profileErr.message}`)
         setLoading(false)
         return
       }
+
+      console.log('Profile saved:', newProfile?.id)
     } catch (err) {
       setError(`Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
       setLoading(false)
