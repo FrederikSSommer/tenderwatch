@@ -22,7 +22,7 @@ const baseNavigation = [
   { name: 'Tender Feed', path: '/feed', icon: Rss },
   { name: 'Profiles', path: '/profiles', icon: Target },
   { name: 'Buyers', path: '/buyers', icon: Building2 },
-  { name: 'Bookmarks', path: '/bookmarks', icon: Bookmark },
+  { name: 'Subscribed', path: '/bookmarks', icon: Bookmark },
   { name: 'Calendar', path: '/calendar', icon: Calendar },
 ]
 

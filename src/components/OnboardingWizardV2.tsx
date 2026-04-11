@@ -183,9 +183,20 @@ function TenderExampleCard({
 
 // ─── Main Wizard ──────────────────────────────────────────────────────
 
-export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean }) {
+export function OnboardingWizardV2({
+  isPublic = false,
+  mode = 'onboarding',
+  existingCompanyName,
+  existingCompanyCountry,
+}: {
+  isPublic?: boolean
+  mode?: 'onboarding' | 'profile'
+  existingCompanyName?: string
+  existingCompanyCountry?: string
+}) {
   const router = useRouter()
   const supabase = createClient()
+  const isAdditionalProfile = mode === 'profile' && !isPublic
 
   // Phase tracking
   const [phase, setPhase] = useState<Phase>('basics')
@@ -193,9 +204,9 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
   const [error, setError] = useState<string | null>(null)
 
   // Step 1: Basics
-  const [companyName, setCompanyName] = useState('')
+  const [companyName, setCompanyName] = useState(existingCompanyName ?? '')
   const [description, setDescription] = useState('')
-  const [country, setCountry] = useState('DK')
+  const [country, setCountry] = useState(existingCompanyCountry ?? 'DK')
 
   // Step 2: Sectors
   const [availableSectors, setAvailableSectors] = useState<Sector[]>([])
@@ -375,40 +386,43 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
     }
 
     try {
-      // Check if company exists, create or update
-      const { data: existingCompany } = await supabase
-        .from('companies')
-        .select('id')
-        .eq('user_id', user.id)
-        .maybeSingle()
+      // Skip company/subscription setup when adding an additional profile
+      if (!isAdditionalProfile) {
+        // Check if company exists, create or update
+        const { data: existingCompany } = await supabase
+          .from('companies')
+          .select('id')
+          .eq('user_id', user.id)
+          .maybeSingle()
 
-      if (existingCompany) {
-        await supabase.from('companies')
-          .update({ name: companyName || description.slice(0, 50), country_code: country })
-          .eq('id', existingCompany.id)
-      } else {
-        const { error: companyErr } = await supabase.from('companies').insert({
-          user_id: user.id,
-          name: companyName || description.slice(0, 50),
-          country_code: country,
-        })
-        if (companyErr) console.warn('Company insert:', companyErr.message)
-      }
+        if (existingCompany) {
+          await supabase.from('companies')
+            .update({ name: companyName || description.slice(0, 50), country_code: country })
+            .eq('id', existingCompany.id)
+        } else {
+          const { error: companyErr } = await supabase.from('companies').insert({
+            user_id: user.id,
+            name: companyName || description.slice(0, 50),
+            country_code: country,
+          })
+          if (companyErr) console.warn('Company insert:', companyErr.message)
+        }
 
-      // Check if subscription exists, create if not
-      const { data: existingSub } = await supabase
-        .from('subscriptions')
-        .select('id')
-        .eq('user_id', user.id)
-        .maybeSingle()
+        // Check if subscription exists, create if not
+        const { data: existingSub } = await supabase
+          .from('subscriptions')
+          .select('id')
+          .eq('user_id', user.id)
+          .maybeSingle()
 
-      if (!existingSub) {
-        const { error: subErr } = await supabase.from('subscriptions').insert({
-          user_id: user.id,
-          plan: 'professional',
-          status: 'active',
-        })
-        if (subErr) console.warn('Subscription insert:', subErr.message)
+        if (!existingSub) {
+          const { error: subErr } = await supabase.from('subscriptions').insert({
+            user_id: user.id,
+            plan: 'professional',
+            status: 'active',
+          })
+          if (subErr) console.warn('Subscription insert:', subErr.message)
+        }
       }
 
       const vr = VALUE_RANGES.find(v => v.id === valueRange)
@@ -495,38 +509,53 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
       {phase === 'basics' && (
         <div>
           <AiMessage>
-            <p className="font-medium">Welcome to TenderWatch!</p>
-            <p className="mt-1">Tell me a bit about your company and I&apos;ll help you find the right public tenders.</p>
+            {isAdditionalProfile ? (
+              <>
+                <p className="font-medium">Let&apos;s build another monitoring profile.</p>
+                <p className="mt-1">Describe what kinds of tenders this profile should track — I&apos;ll handle the rest.</p>
+              </>
+            ) : (
+              <>
+                <p className="font-medium">Welcome to TenderWatch!</p>
+                <p className="mt-1">Tell me a bit about your company and I&apos;ll help you find the right public tenders.</p>
+              </>
+            )}
           </AiMessage>
 
           <div className="space-y-4 mt-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Company name</label>
-              <input
-                type="text"
-                value={companyName}
-                onChange={(e) => setCompanyName(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                placeholder="Your company name"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Country</label>
-              <div className="flex flex-wrap gap-2 mt-2">
-                {COUNTRIES.slice(0, 8).map(c => (
-                  <ChoiceChip
-                    key={c.code}
-                    label={c.name}
-                    emoji={c.flag}
-                    selected={country === c.code}
-                    onClick={() => setCountry(c.code)}
-                  />
-                ))}
+            {!isAdditionalProfile && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Company name</label>
+                <input
+                  type="text"
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="Your company name"
+                />
               </div>
-            </div>
+            )}
+            {!isAdditionalProfile && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Country</label>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {COUNTRIES.slice(0, 8).map(c => (
+                    <ChoiceChip
+                      key={c.code}
+                      label={c.name}
+                      emoji={c.flag}
+                      selected={country === c.code}
+                      onClick={() => setCountry(c.code)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700">
-                What does your company do? <span className="text-gray-400">(1-2 sentences)</span>
+                {isAdditionalProfile
+                  ? <>What should this profile track? <span className="text-gray-400">(1-2 sentences)</span></>
+                  : <>What does your company do? <span className="text-gray-400">(1-2 sentences)</span></>}
               </label>
               <textarea
                 value={description}
@@ -853,12 +882,12 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
           ) : (
             <>
               <BackfillButton />
-              <div className="mt-8 flex justify-center">
+              <div className="mt-8 flex justify-center gap-3">
                 <button
-                  onClick={() => router.push('/feed')}
+                  onClick={() => router.push(isAdditionalProfile ? '/profiles' : '/feed')}
                   className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-3 text-sm font-semibold text-white hover:bg-blue-700"
                 >
-                  Go to my feed
+                  {isAdditionalProfile ? 'Back to profiles' : 'Go to my feed'}
                   <ArrowRight className="h-4 w-4" />
                 </button>
               </div>

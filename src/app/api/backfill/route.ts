@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { calculateRelevance } from '@/lib/ai/relevance-score'
+import { calculateRelevance, extractLearnedKeywords, LearnedSignals } from '@/lib/ai/relevance-score'
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/supabase/types'
 
@@ -320,6 +320,36 @@ export async function POST(request: NextRequest) {
   if (tenders && tenders.length > 0) {
     const matches = []
 
+    // Build learned signals from this user's subscribed tenders
+    let learned: LearnedSignals | undefined
+    const { data: subscribed } = await serviceClient
+      .from('matches')
+      .select('tender:tenders(title, cpv_codes)')
+      .eq('user_id', user.id)
+      .eq('bookmarked', true)
+
+    if (subscribed && subscribed.length > 0) {
+      const titles: string[] = []
+      const cpvCounts = new Map<string, number>()
+      for (const row of subscribed as Array<{
+        tender: { title: string | null; cpv_codes: string[] | null } | null
+      }>) {
+        const t = row.tender
+        if (!t) continue
+        if (t.title) titles.push(t.title)
+        if (Array.isArray(t.cpv_codes)) {
+          for (const c of t.cpv_codes) cpvCounts.set(c, (cpvCounts.get(c) || 0) + 1)
+        }
+      }
+      const recurringCpvs = [...cpvCounts.entries()]
+        .filter(([, n]) => n >= 2)
+        .map(([c]) => c)
+      learned = {
+        cpv_codes: recurringCpvs.length > 0 ? recurringCpvs : [...cpvCounts.keys()].slice(0, 20),
+        keywords: extractLearnedKeywords(titles),
+      }
+    }
+
     for (const tender of tenders) {
       for (const profile of profiles) {
         const result = calculateRelevance(
@@ -337,7 +367,8 @@ export async function POST(request: NextRequest) {
             countries: profile.countries || [],
             min_value_eur: profile.min_value_eur,
             max_value_eur: profile.max_value_eur,
-          }
+          },
+          learned
         )
 
         if (result.score >= MATCH_THRESHOLD) {

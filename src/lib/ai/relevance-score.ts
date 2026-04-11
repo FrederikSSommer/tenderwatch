@@ -15,15 +15,25 @@ interface ScoringProfile {
   max_value_eur: number | null
 }
 
+export interface LearnedSignals {
+  // CPV codes (full 8-digit) seen on tenders the user has subscribed to
+  cpv_codes: string[]
+  // Distinctive title tokens from subscribed tenders
+  keywords: string[]
+}
+
 export interface ScoreResult {
   score: number
   matched_cpv: string[]
   matched_keywords: string[]
+  // Bonus points awarded from learned signals (subset of overall score)
+  learned_bonus?: number
 }
 
 export function calculateRelevance(
   tender: ScoringTender,
-  profile: ScoringProfile
+  profile: ScoringProfile,
+  learned?: LearnedSignals
 ): ScoreResult {
   let score = 0
   const matched_cpv: string[] = []
@@ -103,9 +113,66 @@ export function calculateRelevance(
     }
   }
 
+  // Learned-signal bonus (max 25 points) — biases scoring toward patterns
+  // seen on tenders the user has actually subscribed to.
+  let learned_bonus = 0
+  if (learned && (learned.cpv_codes.length > 0 || learned.keywords.length > 0)) {
+    const learnedCpvSet = new Set(learned.cpv_codes)
+    const learnedDivSet = new Set(learned.cpv_codes.map(c => c.substring(0, 3)))
+    for (const tCpv of tender.cpv_codes) {
+      if (learnedCpvSet.has(tCpv)) {
+        learned_bonus += 12
+      } else if (learnedDivSet.has(tCpv.substring(0, 3))) {
+        learned_bonus += 5
+      }
+    }
+    for (const kw of learned.keywords) {
+      const kwLower = kw.toLowerCase()
+      if (titleLower.includes(kwLower)) {
+        learned_bonus += 6
+        if (!matched_keywords.includes(kw)) matched_keywords.push(kw)
+      } else if (descLower.includes(kwLower)) {
+        learned_bonus += 2
+      }
+    }
+    learned_bonus = Math.min(learned_bonus, 25)
+    score += learned_bonus
+  }
+
   return {
     score: Math.min(score, 100),
     matched_cpv: [...new Set(matched_cpv)],
     matched_keywords: [...new Set(matched_keywords)],
+    learned_bonus,
   }
+}
+
+// Extracts distinctive keywords from a list of subscribed tender titles.
+// Returns single-word tokens that occur in at least 2 titles, sorted by frequency.
+export function extractLearnedKeywords(titles: string[]): string[] {
+  const STOP = new Set([
+    'the', 'and', 'for', 'with', 'from', 'this', 'that', 'tender', 'contract',
+    'services', 'service', 'supply', 'works', 'public', 'procurement', 'notice',
+    'framework', 'agreement', 'project', 'system', 'systems', 'and/or', 'related',
+    'og', 'af', 'til', 'med', 'for', 'der', 'die', 'das', 'und', 'des', 'du',
+  ])
+  const counts = new Map<string, number>()
+  for (const title of titles) {
+    if (!title) continue
+    const seen = new Set<string>()
+    const tokens = title
+      .toLowerCase()
+      .split(/[^a-zæøåäöüéèêàçñ0-9]+/i)
+      .filter(t => t.length >= 4 && !STOP.has(t) && !/^\d+$/.test(t))
+    for (const t of tokens) {
+      if (seen.has(t)) continue
+      seen.add(t)
+      counts.set(t, (counts.get(t) || 0) + 1)
+    }
+  }
+  return [...counts.entries()]
+    .filter(([, n]) => n >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15)
+    .map(([t]) => t)
 }
