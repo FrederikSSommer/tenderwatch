@@ -84,9 +84,11 @@ export function calculateRelevance(
   // Cap keyword score contribution
   score = Math.min(score, 70)
 
-  // Geography match (15 points)
-  // TED uses 3-letter codes (DNK), profiles use 2-letter (DK)
-  if (tender.buyer_country && profile.countries.length > 0) {
+  // Geography match (15 points) — but ONLY if there's already a topic signal
+  // (CPV or keyword match). Country alone should never push a tender across
+  // the relevance threshold — that's how workwear ends up in a shipbuilder's feed.
+  const hasTopicSignal = matched_cpv.length > 0 || matched_keywords.length > 0
+  if (hasTopicSignal && tender.buyer_country && profile.countries.length > 0) {
     const iso3to2: Record<string, string> = {
       'DNK': 'DK', 'NOR': 'NO', 'SWE': 'SE', 'DEU': 'DE',
       'NLD': 'NL', 'FIN': 'FI', 'FRA': 'FR', 'GBR': 'UK',
@@ -101,8 +103,8 @@ export function calculateRelevance(
     }
   }
 
-  // Value range match (15 points)
-  if (tender.estimated_value_eur !== null) {
+  // Value range match (15 points) — also gated on topic signal
+  if (hasTopicSignal && tender.estimated_value_eur !== null) {
     const inRange =
       (profile.min_value_eur === null ||
         tender.estimated_value_eur >= profile.min_value_eur) &&

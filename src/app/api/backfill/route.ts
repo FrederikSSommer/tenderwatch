@@ -3,6 +3,11 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { calculateRelevance, extractLearnedKeywords, LearnedSignals } from '@/lib/ai/relevance-score'
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/supabase/types'
+import Anthropic from '@anthropic-ai/sdk'
+
+function getAnthropicClient() {
+  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
+}
 
 function getServiceClient() {
   return createClient<Database>(
@@ -12,8 +17,14 @@ function getServiceClient() {
 }
 
 const MAX_DAYS = 90
-const MATCH_THRESHOLD = 20
+// Higher threshold + topic-gated bonuses (see relevance-score.ts) means a
+// tender now needs real CPV/keyword overlap to get listed. This is what stops
+// "every Danish tender" from showing up to a Danish shipbuilder.
+const MATCH_THRESHOLD = 35
 const TED_API_BASE = 'https://api.ted.europa.eu/v3'
+
+// Cap how many candidates we send to Claude for AI re-ranking per backfill
+const AI_FILTER_CAP = 60
 
 const TED_FIELDS = [
   'notice-title',
@@ -144,7 +155,18 @@ function parseNotice(raw: Record<string, unknown>): TenderInsert | null {
   }
 }
 
-// Build targeted TED queries from user profiles
+const COUNTRY_2TO3: Record<string, string> = {
+  'DK': 'DNK', 'NO': 'NOR', 'SE': 'SWE', 'DE': 'DEU',
+  'NL': 'NLD', 'FI': 'FIN', 'FR': 'FRA', 'UK': 'GBR',
+  'ES': 'ESP', 'IT': 'ITA', 'PL': 'POL', 'BE': 'BEL',
+  'AT': 'AUT', 'PT': 'PRT', 'IE': 'IRL', 'CZ': 'CZE',
+  'RO': 'ROU', 'BG': 'BGR', 'HR': 'HRV', 'LT': 'LTU',
+  'LV': 'LVA', 'EE': 'EST',
+}
+
+// Build targeted TED queries from user profiles.
+// Each query MUST contain a topic signal (CPV or keyword) — never country alone,
+// otherwise we'd ingest the entire country's procurement firehose.
 function buildTedQueries(
   profiles: { cpv_codes: string[]; keywords: string[]; countries: string[] }[],
   dateStr: string
@@ -152,44 +174,37 @@ function buildTedQueries(
   const queries: string[] = []
 
   for (const profile of profiles) {
-    // Query by CPV codes (most specific)
+    const tedCountries = profile.countries
+      .map(c => COUNTRY_2TO3[c] || c)
+      .filter(Boolean)
+    const countryFilter =
+      tedCountries.length > 0 && tedCountries.length <= 5
+        ? `(${tedCountries.map(c => `organisation-country-buyer=${c}`).join(' OR ')})`
+        : null
+
+    // CPV query — use 4-digit prefix (group level) instead of 2-digit (division).
+    // 2-digit `34*` catches all transport equipment; 4-digit `3451*` only ships.
     if (profile.cpv_codes.length > 0) {
-      // TED uses classification-cpv field — search by CPV prefix
-      const cpvParts = profile.cpv_codes.slice(0, 5).map(c => {
-        // Use 2-digit division level for broader matching
-        const prefix = c.substring(0, 2)
-        return `classification-cpv=${prefix}*`
-      })
-      queries.push(`PD>=${dateStr} AND (${cpvParts.join(' OR ')})`)
+      const cpvParts = profile.cpv_codes
+        .slice(0, 8)
+        .map(c => `classification-cpv=${c.substring(0, 4)}*`)
+      const cpvFilter = `(${[...new Set(cpvParts)].join(' OR ')})`
+      const q = countryFilter
+        ? `PD>=${dateStr} AND ${cpvFilter} AND ${countryFilter}`
+        : `PD>=${dateStr} AND ${cpvFilter}`
+      queries.push(q)
     }
 
-    // Query by keywords (full-text search)
+    // Keyword query — always combined with country if available
     if (profile.keywords.length > 0) {
-      const kwParts = profile.keywords.slice(0, 5).map(k => `FT~"${k}"`)
-      queries.push(`PD>=${dateStr} AND (${kwParts.join(' OR ')})`)
-    }
-
-    // Query by country if set
-    if (profile.countries.length > 0 && profile.countries.length <= 3) {
-      const countryMap: Record<string, string> = {
-        'DK': 'DNK', 'NO': 'NOR', 'SE': 'SWE', 'DE': 'DEU',
-        'NL': 'NLD', 'FI': 'FIN', 'FR': 'FRA', 'UK': 'GBR',
-        'ES': 'ESP', 'IT': 'ITA', 'PL': 'POL', 'BE': 'BEL',
-        'AT': 'AUT', 'PT': 'PRT', 'IE': 'IRL', 'CZ': 'CZE',
-        'RO': 'ROU', 'BG': 'BGR', 'HR': 'HRV', 'LT': 'LTU',
-        'LV': 'LVA', 'EE': 'EST',
-      }
-      const tedCountries = profile.countries
-        .map(c => countryMap[c] || c)
-        .filter(Boolean)
-      if (tedCountries.length > 0) {
-        const countryFilter = tedCountries.map(c => `organisation-country-buyer=${c}`).join(' OR ')
-        queries.push(`PD>=${dateStr} AND (${countryFilter})`)
-      }
+      const kwFilter = `(${profile.keywords.slice(0, 6).map(k => `FT~"${k}"`).join(' OR ')})`
+      const q = countryFilter
+        ? `PD>=${dateStr} AND ${kwFilter} AND ${countryFilter}`
+        : `PD>=${dateStr} AND ${kwFilter}`
+      queries.push(q)
     }
   }
 
-  // Deduplicate queries
   return [...new Set(queries)]
 }
 
@@ -318,8 +333,6 @@ export async function POST(request: NextRequest) {
   let totalMatches = 0
 
   if (tenders && tenders.length > 0) {
-    const matches = []
-
     // Build learned signals from this user's subscribed tenders
     let learned: LearnedSignals | undefined
     const { data: subscribed } = await serviceClient
@@ -350,6 +363,19 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Stage 1: keyword/CPV scoring — produces candidates per profile
+    type Candidate = {
+      tender_id: string
+      profile_id: string
+      user_id: string
+      relevance_score: number
+      matched_cpv: string[]
+      matched_keywords: string[]
+      _profile: typeof profiles[number]
+      _tender: typeof tenders[number]
+    }
+    const candidates: Candidate[] = []
+
     for (const tender of tenders) {
       for (const profile of profiles) {
         const result = calculateRelevance(
@@ -372,17 +398,101 @@ export async function POST(request: NextRequest) {
         )
 
         if (result.score >= MATCH_THRESHOLD) {
-          matches.push({
+          candidates.push({
             tender_id: tender.id,
             profile_id: profile.id,
             user_id: user.id,
             relevance_score: result.score,
             matched_cpv: result.matched_cpv,
             matched_keywords: result.matched_keywords,
+            _profile: profile,
+            _tender: tender,
           })
         }
       }
     }
+
+    // Stage 2: AI re-rank — Claude judges actual relevance per profile.
+    // This is what stops "Danish workwear" from showing up to a Danish shipbuilder
+    // even when CPV/keyword scoring gives it a passing 35-50.
+    const acceptedKeys = new Set<string>()
+    if (candidates.length > 0) {
+      // Group by profile so Claude evaluates each profile's candidates as a set
+      const byProfile = new Map<string, Candidate[]>()
+      for (const c of candidates) {
+        const list = byProfile.get(c.profile_id) || []
+        list.push(c)
+        byProfile.set(c.profile_id, list)
+      }
+
+      for (const [profileId, profileCandidates] of byProfile) {
+        // Sort by keyword/CPV score so the strongest go to Claude first
+        profileCandidates.sort((a, b) => b.relevance_score - a.relevance_score)
+        const topN = profileCandidates.slice(0, AI_FILTER_CAP)
+        const profile = topN[0]._profile
+
+        const profileSnapshot =
+          `Name: ${profile.name || 'monitoring profile'}\n` +
+          `Topic keywords: ${(profile.keywords || []).slice(0, 12).join(', ') || '(none)'}\n` +
+          `CPV codes (8-digit): ${(profile.cpv_codes || []).slice(0, 12).join(', ') || '(none)'}\n` +
+          `Excluded terms: ${(profile.exclude_keywords || []).join(', ') || '(none)'}`
+
+        const prompt = `You are evaluating which public tenders are actually relevant to a buyer's monitoring profile.
+
+PROFILE
+${profileSnapshot}
+
+Be STRICT and LITERAL. Match the actual product or service the profile would buy or sell, not just shared sectors. Examples of WRONG matches:
+- a shipbuilding profile with workwear, hand guns, or canteen catering tenders
+- a software/IT profile with office furniture or printer toner
+- a road construction profile with traffic-light bulbs
+A weak buyer/CPV overlap is NOT enough — the actual subject of the tender must align with the profile.
+
+CANDIDATES (numbered)
+${topN.map((c, i) => `[${i}] "${c._tender.title}"
+   Buyer: ${c._tender.buyer_name || '?'}${c._tender.buyer_country ? ` (${c._tender.buyer_country})` : ''}
+   CPV: ${(c._tender.cpv_codes || []).slice(0, 6).join(', ') || 'none'}
+   ${c._tender.description ? c._tender.description.slice(0, 220) : ''}`).join('\n\n')}
+
+Return ONLY a JSON array. Include ONLY entries scoring 5 or higher (0-10 scale). Format:
+[{"i": 0, "score": 9}, {"i": 3, "score": 7}, ...]`
+
+        try {
+          const msg = await getAnthropicClient().messages.create({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 1500,
+            messages: [
+              { role: 'user', content: prompt },
+              { role: 'assistant', content: '[' },
+            ],
+          })
+          const text = msg.content[0].type === 'text' ? '[' + msg.content[0].text : '[]'
+          const m = text.match(/\[[\s\S]*?\]/)
+          if (!m) continue
+          const scored: { i: number; score: number }[] = JSON.parse(m[0])
+          for (const s of scored) {
+            if (typeof s.i !== 'number' || s.score < 5) continue
+            if (s.i < 0 || s.i >= topN.length) continue
+            const c = topN[s.i]
+            // Blend: 60% AI score (×10) + 40% keyword score, capped 100
+            const blended = Math.min(100, Math.round(s.score * 6 + c.relevance_score * 0.4))
+            c.relevance_score = blended
+            acceptedKeys.add(`${profileId}::${c.tender_id}`)
+          }
+        } catch (e) {
+          errors.push(`AI re-rank: ${e instanceof Error ? e.message : String(e)}`)
+          // On AI failure, fall back to keyword-only matches (already filtered to threshold 35)
+          for (const c of topN) acceptedKeys.add(`${profileId}::${c.tender_id}`)
+        }
+      }
+    }
+
+    const matches = candidates
+      .filter(c => acceptedKeys.has(`${c.profile_id}::${c.tender_id}`))
+      .map(({ _profile, _tender, ...m }) => {
+        void _profile; void _tender
+        return m
+      })
 
     if (matches.length > 0) {
       for (let i = 0; i < matches.length; i += 500) {
