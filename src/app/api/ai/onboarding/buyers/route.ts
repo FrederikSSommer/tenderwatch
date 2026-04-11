@@ -14,39 +14,61 @@ export async function POST(request: NextRequest) {
 Company: "${description}"
 Company country: ${country || 'EU'}
 Sectors: ${(sectors || []).join(', ')}
-Specific interests: ${(subsectors || []).join(', ')}
+${(subsectors || []).length > 0 ? `Specific interests: ${(subsectors || []).join(', ')}` : ''}
 Target countries: ${(countries || []).join(', ')}
 
-Generate 8-12 specific public sector organizations (ministries, agencies, municipalities, EU institutions) that regularly issue tenders in these areas.
+Generate 8-12 specific public sector organizations (ministries, agencies, municipalities, EU institutions) that regularly issue tenders in these areas. Focus on organizations that actually publish on TED. Use real official names.
 
-For each organization, provide:
-- The official name (as it appears on TED)
-- A short English label
-- 1-2 distinctive search keywords from the official name that would match on TED full-text search (a single unique word from the org name works best, e.g. "Forsvarsministeriets" for DALO)
+For each organization include:
+- id: unique slug
+- name: official organization name (as it appears on TED)
+- label: short English label (3-5 words)
+- country: ISO 2-letter code
+- searchTerms: 1-2 distinctive words from the official name for TED full-text search. Use a single distinctive word that occurs in the org name (e.g. "Forsvarsministeriets" for the Danish Defence Acquisition Org). Avoid generic words.
 
-For Danish defence/military, include:
-- "Forsvarsministeriets Materiel- og Indkøbsstyrelse" with search term "Forsvarsministeriets"
-- "Forsvarets Koncernfælles Informatiktjeneste" with search term "Forsvarets Informatiktjeneste"
-
-Return ONLY a JSON array:
-[{"id": "unique-slug", "name": "Official organization name", "label": "Short English label", "country": "DK", "searchTerms": ["Forsvarsministeriets"]}]
-
-Focus on organizations that ACTUALLY publish on TED (EU procurement portal). Use real organization names. The searchTerms should be distinctive words from the official name that can be used for full-text search on TED.`
+Reply with ONLY a JSON array. No prose, no code fences. Start your response with [ and end with ]. Example shape:
+[{"id":"dk-dalo","name":"Forsvarsministeriets Materiel- og Indkøbsstyrelse","label":"Danish Defence Acquisition","country":"DK","searchTerms":["Forsvarsministeriets"]}]`
 
   try {
     const message = await getClient().messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 800,
-      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 1500,
+      messages: [
+        { role: 'user', content: prompt },
+        { role: 'assistant', content: '[' },
+      ],
     })
 
-    const text = message.content[0].type === 'text' ? message.content[0].text : ''
-    const jsonMatch = text.match(/\[[\s\S]*\]/)
-    const buyers = jsonMatch ? JSON.parse(jsonMatch[0]) : []
+    const raw = message.content[0].type === 'text' ? message.content[0].text : ''
+    // Prefill forces continuation — prepend the [ we sent as assistant
+    const text = '[' + raw
+
+    let buyers: unknown[] = []
+    try {
+      buyers = JSON.parse(text)
+    } catch {
+      // Fallback: try to extract the largest valid JSON array
+      const match = text.match(/\[[\s\S]*\]/)
+      if (match) {
+        try { buyers = JSON.parse(match[0]) } catch {
+          // Last resort: trim trailing junk after final closing bracket
+          const lastBracket = text.lastIndexOf(']')
+          if (lastBracket > 0) {
+            try { buyers = JSON.parse(text.slice(0, lastBracket + 1)) } catch {}
+          }
+        }
+      }
+    }
+
+    if (!Array.isArray(buyers) || buyers.length === 0) {
+      console.error('Buyer suggestion: empty/invalid JSON. Raw:', text.slice(0, 500))
+      return NextResponse.json({ error: 'No buyers returned', buyers: [] }, { status: 500 })
+    }
 
     return NextResponse.json({ buyers })
   } catch (error) {
-    console.error('Buyer suggestion error:', error)
-    return NextResponse.json({ error: 'Failed to generate buyer suggestions' }, { status: 500 })
+    const msg = error instanceof Error ? error.message : String(error)
+    console.error('Buyer suggestion error:', msg)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

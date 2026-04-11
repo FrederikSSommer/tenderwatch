@@ -262,14 +262,17 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
         }),
       })
       const data = await res.json()
-      if (data.buyers) {
-        setAvailableBuyers(data.buyers)
-        setPhase('buyers')
-      } else {
-        setError('Failed to suggest buyers. Please try again.')
+      // Buyer suggestions are optional — if AI fails, still let user advance
+      // and add custom buyers manually.
+      setAvailableBuyers(Array.isArray(data.buyers) ? data.buyers : [])
+      setPhase('buyers')
+      if (!data.buyers || data.buyers.length === 0) {
+        setError('Could not auto-suggest buyers — you can add organizations manually below or skip this step.')
       }
     } catch {
-      setError('Network error. Please try again.')
+      setAvailableBuyers([])
+      setPhase('buyers')
+      setError('Could not auto-suggest buyers — add organizations manually or skip.')
     }
     setLoading(false)
   }
