@@ -253,18 +253,71 @@ native_keywords: 3-6 keywords in the local language(s) of the target countries t
     }
   }
 
-  // Interleave: take up to 8 from tier 0 (buyer+topic), 4 from tier 1 (topic), 2 from tier 2 (buyer-only), 1 from tier 3 (broad)
-  const limits = [8, 4, 2, 1]
-  const allTenders: Record<string, unknown>[] = []
+  // Interleave broadly — fetch a wider candidate pool, AI will filter for relevance
+  const limits = [15, 10, 5, 3]
+  const candidatesRaw: Record<string, unknown>[] = []
   for (let tier = 0; tier < tierResults.length; tier++) {
-    const take = limits[tier]
-    allTenders.push(...tierResults[tier].slice(0, take))
+    candidatesRaw.push(...tierResults[tier].slice(0, limits[tier]))
   }
 
-  const tenders = allTenders.slice(0, 15).map(parseTender)
+  const candidates = candidatesRaw.slice(0, 30).map(parseTender)
 
+  // Step 4: AI relevance filtering — let Claude actually evaluate which tenders match the company
+  if (candidates.length > 0) {
+    try {
+      const filterPrompt = `You are evaluating which public tenders are relevant for a company.
+
+Company: "${description}"
+Sectors of interest: ${(sectors || []).join(', ')}
+${(subsectors || []).length > 0 ? `Specific interests: ${(subsectors || []).join(', ')}` : ''}
+
+Below are real tenders. Rate each one's relevance to this specific company on a 0-10 scale.
+Be STRICT and LITERAL: if the company builds ships, hand guns are NOT relevant even if both are "defence". Cleaning supplies for a navy buyer are NOT relevant to a shipbuilder. Match the actual product or service the company offers, not just the buyer or sector.
+
+${candidates.map((t, i) => `[${i}] "${t.title}"
+   Buyer: ${t.buyerName || '?'}${t.buyerCountry ? ` (${t.buyerCountry})` : ''}
+   CPV: ${t.cpvCodes.join(', ') || 'none'}
+   ${t.description ? t.description.slice(0, 250) : ''}`).join('\n\n')}
+
+Return ONLY a JSON array, ordered by score descending. Include only tenders scoring 5 or higher. Maximum 12 entries.
+Format: [{"i": 0, "score": 9, "why": "short reason"}, ...]`
+
+      const filterMessage = await getClient().messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1500,
+        messages: [{ role: 'user', content: filterPrompt }],
+      })
+
+      const filterText = filterMessage.content[0].type === 'text' ? filterMessage.content[0].text : '[]'
+      const filterMatch = filterText.match(/\[[\s\S]*\]/)
+      if (filterMatch) {
+        const scored: { i: number; score: number; why?: string }[] = JSON.parse(filterMatch[0])
+        const filtered = scored
+          .filter(s => typeof s.i === 'number' && s.score >= 5 && s.i >= 0 && s.i < candidates.length)
+          .map(s => ({
+            ...candidates[s.i],
+            relevanceScore: s.score,
+            relevanceReason: s.why || null,
+          }))
+
+        if (filtered.length > 0) {
+          return NextResponse.json({
+            tenders: filtered,
+            queriesRun: queryTiers.flat().length,
+            cpvPrefixes,
+            keywords,
+            filteredFrom: candidates.length,
+          })
+        }
+      }
+    } catch (e) {
+      console.warn('AI relevance filter failed, falling back to raw results:', e)
+    }
+  }
+
+  // Fallback: return top candidates unfiltered
   return NextResponse.json({
-    tenders,
+    tenders: candidates.slice(0, 12),
     queriesRun: queryTiers.flat().length,
     cpvPrefixes,
     keywords,

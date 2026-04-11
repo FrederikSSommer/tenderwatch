@@ -23,6 +23,8 @@ interface ExampleTender {
   description: string | null
   tedUrl: string
   noticeType: string | null
+  relevanceScore?: number
+  relevanceReason?: string | null
 }
 
 interface Buyer { id: string; name: string; label: string; country: string }
@@ -38,7 +40,7 @@ interface GeneratedProfile {
   reasoning: string
 }
 
-type Phase = 'basics' | 'sectors' | 'subsectors' | 'buyers' | 'tenders' | 'generating' | 'review' | 'done'
+type Phase = 'basics' | 'sectors' | 'buyers' | 'tenders' | 'generating' | 'review' | 'done'
 
 const COUNTRIES = [
   { code: 'DK', name: 'Denmark', flag: '🇩🇰' },
@@ -123,12 +125,26 @@ function TenderExampleCard({
     }`}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
-          <h4 className="font-medium text-gray-900 text-sm leading-snug">{tender.title}</h4>
+          <div className="flex items-start gap-2">
+            <h4 className="font-medium text-gray-900 text-sm leading-snug flex-1">{tender.title}</h4>
+            {typeof tender.relevanceScore === 'number' && (
+              <span className={`flex-shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full ${
+                tender.relevanceScore >= 8 ? 'bg-green-100 text-green-700'
+                : tender.relevanceScore >= 6 ? 'bg-blue-100 text-blue-700'
+                : 'bg-gray-100 text-gray-600'
+              }`}>
+                {tender.relevanceScore}/10
+              </span>
+            )}
+          </div>
           <p className="text-xs text-gray-500 mt-1">
             {tender.buyerName || 'Unknown buyer'}
             {tender.buyerCountry && ` · ${tender.buyerCountry}`}
             {tender.estimatedValue && ` · EUR ${(tender.estimatedValue / 1000).toFixed(0)}k`}
           </p>
+          {tender.relevanceReason && (
+            <p className="text-xs text-blue-600 mt-1 italic">{tender.relevanceReason}</p>
+          )}
           {tender.description && (
             <p className="text-xs text-gray-400 mt-1.5 line-clamp-2">{tender.description}</p>
           )}
@@ -185,9 +201,7 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
   const [availableSectors, setAvailableSectors] = useState<Sector[]>([])
   const [selectedSectorIds, setSelectedSectorIds] = useState<Set<string>>(new Set())
 
-  // Step 3: Subsectors + preferences
-  const [availableSubsectors, setAvailableSubsectors] = useState<Sector[]>([])
-  const [selectedSubsectorIds, setSelectedSubsectorIds] = useState<Set<string>>(new Set())
+  // Targeting (set in basics step)
   const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set(['DK']))
   const [valueRange, setValueRange] = useState('any')
 
@@ -229,36 +243,11 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
     setLoading(false)
   }
 
-  async function goToSubsectors() {
+  async function goToBuyers() {
     if (selectedSectorIds.size === 0) return
     setLoading(true)
     setError(null)
-    const sectors = availableSectors
-      .filter(s => selectedSectorIds.has(s.id))
-      .map(s => s.label)
-
-    try {
-      const res = await fetch('/api/ai/onboarding/sectors', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description, country, selectedSectors: sectors }),
-      })
-      const data = await res.json()
-      if (data.sectors) {
-        setAvailableSubsectors(data.sectors)
-        setPhase('subsectors')
-      }
-    } catch {
-      setError('Failed to load. Please try again.')
-    }
-    setLoading(false)
-  }
-
-  async function goToBuyers() {
-    setLoading(true)
-    setError(null)
     const sectors = availableSectors.filter(s => selectedSectorIds.has(s.id)).map(s => s.label)
-    const subsectors = availableSubsectors.filter(s => selectedSubsectorIds.has(s.id)).map(s => s.label)
 
     try {
       const res = await fetch('/api/ai/onboarding/buyers', {
@@ -268,7 +257,7 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
           description,
           country,
           sectors,
-          subsectors,
+          subsectors: [],
           countries: [...selectedCountries],
         }),
       })
@@ -289,7 +278,6 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
     setLoading(true)
     setError(null)
     const sectors = availableSectors.filter(s => selectedSectorIds.has(s.id)).map(s => s.label)
-    const subsectors = availableSubsectors.filter(s => selectedSubsectorIds.has(s.id)).map(s => s.label)
     const selectedBuyers = availableBuyers.filter(b => selectedBuyerIds.has(b.id))
 
     try {
@@ -299,7 +287,7 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
         body: JSON.stringify({
           description,
           sectors,
-          subsectors,
+          subsectors: [],
           countries: [...selectedCountries],
           buyers: selectedBuyers,
         }),
@@ -322,7 +310,6 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
     setError(null)
 
     const sectors = availableSectors.filter(s => selectedSectorIds.has(s.id)).map(s => s.label)
-    const subsectors = availableSubsectors.filter(s => selectedSubsectorIds.has(s.id)).map(s => s.label)
     const liked = exampleTenders.filter(t => likedIds.has(t.id))
     const disliked = exampleTenders.filter(t => dislikedIds.has(t.id))
     const selectedBuyers = availableBuyers.filter(b => selectedBuyerIds.has(b.id))
@@ -337,7 +324,7 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
           description,
           companyCountry: country,
           sectors,
-          subsectors,
+          subsectors: [],
           selectedCountries: [...selectedCountries],
           valueRange: vr?.range ? `${vr.range[0] || 0}-${vr.range[1] || 'unlimited'}` : null,
           likedTenders: liked,
@@ -478,7 +465,7 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
 
   // ─── Progress bar ────────────────────────────────────────────────
 
-  const phases: Phase[] = ['basics', 'sectors', 'subsectors', 'buyers', 'tenders', 'generating', 'review', 'done']
+  const phases: Phase[] = ['basics', 'sectors', 'buyers', 'tenders', 'generating', 'review', 'done']
   const phaseIndex = phases.indexOf(phase)
 
   // ─── Render ──────────────────────────────────────────────────────
@@ -487,7 +474,7 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
     <div className="max-w-2xl mx-auto">
       {/* Progress */}
       <div className="flex items-center gap-1.5 mb-8">
-        {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+        {[0, 1, 2, 3, 4, 5].map((i) => (
           <div
             key={i}
             className={`flex-1 h-1.5 rounded-full transition-colors ${i <= phaseIndex ? 'bg-blue-600' : 'bg-gray-200'}`}
@@ -546,6 +533,33 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
                 placeholder="We provide maritime engineering consultancy specializing in ship design and naval architecture..."
               />
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Which countries should I search in?</label>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {COUNTRIES.map(c => (
+                  <ChoiceChip
+                    key={c.code}
+                    label={c.name}
+                    emoji={c.flag}
+                    selected={selectedCountries.has(c.code)}
+                    onClick={() => setSelectedCountries(toggleSet(selectedCountries, c.code))}
+                  />
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Typical contract size</label>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {VALUE_RANGES.map(v => (
+                  <ChoiceChip
+                    key={v.id}
+                    label={v.label}
+                    selected={valueRange === v.id}
+                    onClick={() => setValueRange(v.id)}
+                  />
+                ))}
+              </div>
+            </div>
           </div>
 
           <div className="mt-8 flex justify-end">
@@ -585,76 +599,8 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
               <ArrowLeft className="h-4 w-4" /> Back
             </button>
             <button
-              onClick={goToSubsectors}
-              disabled={selectedSectorIds.size === 0 || loading}
-              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-              {loading ? 'Thinking...' : 'Continue'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Phase: Subsectors + Country + Value ── */}
-      {phase === 'subsectors' && (
-        <div>
-          <AiMessage>
-            <p>Great choices! Let me get more specific. <strong>Which of these apply?</strong></p>
-          </AiMessage>
-
-          <div className="flex flex-wrap gap-2 mt-2">
-            {availableSubsectors.map(s => (
-              <ChoiceChip
-                key={s.id}
-                label={s.label}
-                emoji={s.emoji}
-                selected={selectedSubsectorIds.has(s.id)}
-                onClick={() => setSelectedSubsectorIds(toggleSet(selectedSubsectorIds, s.id))}
-              />
-            ))}
-          </div>
-
-          <div className="mt-6">
-            <AiMessage>
-              <p>Which countries should I search in?</p>
-            </AiMessage>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {COUNTRIES.map(c => (
-                <ChoiceChip
-                  key={c.code}
-                  label={c.name}
-                  emoji={c.flag}
-                  selected={selectedCountries.has(c.code)}
-                  onClick={() => setSelectedCountries(toggleSet(selectedCountries, c.code))}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-6">
-            <AiMessage>
-              <p>What contract size are you typically going for?</p>
-            </AiMessage>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {VALUE_RANGES.map(v => (
-                <ChoiceChip
-                  key={v.id}
-                  label={v.label}
-                  selected={valueRange === v.id}
-                  onClick={() => setValueRange(v.id)}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-8 flex items-center justify-between">
-            <button onClick={() => setPhase('sectors')} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
-              <ArrowLeft className="h-4 w-4" /> Back
-            </button>
-            <button
               onClick={goToBuyers}
-              disabled={loading}
+              disabled={selectedSectorIds.size === 0 || loading}
               className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Building2 className="h-4 w-4" />}
@@ -718,7 +664,7 @@ export function OnboardingWizardV2({ isPublic = false }: { isPublic?: boolean })
           </div>
 
           <div className="mt-8 flex items-center justify-between">
-            <button onClick={() => setPhase('subsectors')} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
+            <button onClick={() => setPhase('sectors')} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
               <ArrowLeft className="h-4 w-4" /> Back
             </button>
             <div className="flex items-center gap-3">
