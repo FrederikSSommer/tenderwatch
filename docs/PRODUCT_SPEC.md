@@ -1,14 +1,14 @@
-# TenderRadar — Product Specification v0.1
+# TenderWatch — Product Specification v0.2
 **PWA · SaaS · EU Public Procurement Intelligence**
 
 ---
 
 ## 1. Product Overview
 
-**TenderRadar** is a progressive web app that makes EU public procurement intelligence fast, structured, and actionable. It connects to the TED (Tenders Electronic Daily) API, surfaces relevant opportunities through saved search agents, summarises tender documents with AI, and provides a bid pipeline CRM to manage active pursuits — all in a polished, team-ready workspace.
+**TenderWatch** is a progressive web app that makes EU public procurement intelligence fast, structured, and actionable. It connects to the TED (Tenders Electronic Daily) API, surfaces relevant opportunities through AI-powered monitoring profiles, summarises tender documents with AI, and provides a bid pipeline CRM to manage active pursuits — all in a polished, team-ready workspace.
 
 ### Problem it solves
-TED is comprehensive but painful to use: raw search UX, no persistent filters, no alerts, no pipeline management, and dense documents with no summarisation. TenderRadar wraps TED data in a product that BD and procurement professionals actually want to use daily.
+TED is comprehensive but painful to use: raw search UX, no persistent filters, no alerts, no pipeline management, and dense documents with no summarisation. TenderWatch wraps TED data in a product that BD and procurement professionals actually want to use daily.
 
 ### Target users
 - BD managers and procurement teams at companies bidding on EU public contracts
@@ -20,217 +20,155 @@ TED is comprehensive but painful to use: raw search UX, no persistent filters, n
 
 ## 2. Tech Stack
 
-| Layer | Choice | Rationale |
+| Layer | Choice | Status |
 |---|---|---|
-| Framework | **Next.js 14** (App Router) | SSR + API routes in one repo, excellent PWA support, fast DX |
-| Database & Auth | **Supabase** | Postgres, row-level security, auth, realtime, storage — all in one |
-| Styling | **Tailwind CSS + shadcn/ui** | Fastest path to polished, consistent UI |
-| AI | **Anthropic Claude API** (claude-sonnet-4) | Tender summarisation and relevance scoring |
-| Email | **Resend** | Simple transactional email API with React Email templates |
-| Push Notifications | **Web Push (VAPID)** via Next.js API route | Native PWA push, no native app needed |
-| Background Jobs | **Supabase Edge Functions + pg_cron** | Poll TED API on schedule, trigger alerts |
-| Payments | **Stripe** | Freemium subscription management |
-| Deployment | **Vercel** | Zero-config Next.js deployment, Edge Functions |
+| Framework | **Next.js** (App Router) | BUILT |
+| Database & Auth | **Supabase** (Postgres, RLS, auth) | BUILT |
+| Styling | **Tailwind CSS** | BUILT |
+| AI | **Anthropic Claude API** (claude-sonnet-4-20250514) | BUILT |
+| Email | **Resend** | BUILT (notifications) |
+| Background Jobs | **Vercel Cron** + Next.js API routes | BUILT |
+| Payments | **Stripe** | BUILT (webhooks, pricing page) |
+| Deployment | **Vercel** | BUILT |
+| Push Notifications | Web Push (VAPID) | NOT STARTED |
 
 ---
 
 ## 3. Information Architecture
 
 ```
-/                        → Landing page (marketing)
-/login                   → Auth (email magic link + Google OAuth)
-/app/dashboard           → Home — summary of agents, pipeline, activity
-/app/discover            → TED tender search & browse
-/app/agents              → Saved search agents management
-/app/tenders/[id]        → Single tender detail + AI summary
-/app/pipeline            → Bid pipeline (kanban + list view)
-/app/pipeline/[id]       → Single bid workspace
-/app/buyers              → Followed contracting authorities
-/app/workspace           → Team settings, members, roles
-/app/settings            → User preferences, notifications, billing
-/app/settings/billing    → Stripe subscription management
+/                           → Landing page (marketing)              BUILT
+/login                      → Auth (email + OAuth)                  BUILT
+/signup                     → Signup                                BUILT
+/demo/*                     → Full demo mode (no auth)              BUILT
+
+(dashboard) routes — auth required:
+/dashboard                  → Home summary                          BUILT
+/feed                       → Tender feed (matched tenders)         BUILT
+/profiles                   → Monitoring profiles management        BUILT
+/profiles/new               → AI-powered profile wizard             BUILT
+/tender/[id]                → Tender detail + AI summary            BUILT
+/buyers                     → Followed contracting authorities      BUILT
+/bookmarks                  → Followed tenders                      BUILT
+/calendar                   → Deadline calendar                     BUILT
+/settings                   → User preferences                      BUILT
+/onboarding                 → New user onboarding                   BUILT
+
+NOT YET BUILT:
+/discover                   → TED search & browse                   NOT STARTED
+/pipeline                   → Bid pipeline (kanban + list)          NOT STARTED
+/pipeline/[id]              → Single bid workspace                  NOT STARTED
+/workspace                  → Team settings, members, roles         NOT STARTED
 ```
 
 ---
 
-## 4. Feature Specification
+## 4. Feature Specification — Status Tracker
 
-### 4.1 Dashboard
+### 4.1 Dashboard — BUILT
+- New matches today count
+- Pipeline summary (placeholder)
+- Upcoming deadlines from followed tenders
+- Recent activity
 
-**Purpose:** Single-screen situational awareness for the user's procurement landscape.
+### 4.2 Tender Discovery — PARTIAL
+**Built:**
+- Tender feed with relevance-ranked results from monitoring profiles
+- Filter by profile
+- AI relevance score badge on each card
+- AI one-liner reason on each card explaining why it matches
 
-**Widgets:**
-- **New matches today** — count of new tenders matched by all agents since last login, with quick-view list
-- **Pipeline summary** — count of bids by stage (Qualifying → Bidding → Submitted → Won/Lost), total estimated value
-- **Active agents** — list of search agents with last match count and last run time
-- **Followed buyers** — list of contracting authorities with recent activity indicator
-- **Upcoming deadlines** — next 5 submission deadlines from active pipeline bids
-- **Recent activity feed** — team activity log (new matches, status changes, comments)
+**Not built:**
+- Full-text TED search & browse (independent of profiles)
+- Advanced filter panel (CPV, country, buyer, notice type, value range, date, procedure)
+- Sort by relevance/date/deadline/value
+- "Save to pipeline" quick action from results
 
-**Freemium gate:** Free tier shows last 7 days only. Pro shows 90 days.
+### 4.3 Tender Detail Page — BUILT
+- Header with title, buyer, CPV codes, dates, value
+- AI Summary (on-demand via Claude API)
+- Follow button
+- TED link to original notice
 
----
+**Not built:**
+- AI relevance assessment paragraph (per-profile explanation)
+- Full rendered TED notice HTML
+- Document links/attachments
+- Team comments thread
+- Export to PDF
+- Add to pipeline action
 
-### 4.2 Tender Discovery
+### 4.4 Monitoring Profiles (replaces "Search Agents") — BUILT
+- AI-powered wizard for profile creation (company description, sectors, buyers, countries)
+- Auto-generates CPV codes, keywords, exclude keywords
+- Example tender preview with like/dislike feedback
+- Edit and delete profiles
+- Active/paused toggle
 
-**Purpose:** Search and browse TED procurement notices with a dramatically better UX than TED itself.
+**Architecture (BUILT):**
+- Two-stage matching pipeline:
+  - Stage 1: Cheap CPV/keyword pre-filter (threshold 5)
+  - Stage 2: Claude AI re-rank with strict literal-match prompt
+- Broad TED ingestion (all EU, no per-user filtering)
+- CPV code normalization (8-digit, prefix matching)
+- Topic-gated bonuses (country/value only count with topic signal)
+- Match caching with ai_reason backfill
+- Learned signals from followed tenders (CPV + keyword patterns)
 
-**Search interface:**
-- Full-text keyword search
-- Filter panel:
-  - CPV code (Common Procurement Vocabulary) — searchable dropdown with category labels
-  - Country / region
-  - Contracting authority (buyer)
-  - Notice type (Contract Notice, Prior Information Notice, Contract Award)
-  - Contract value range (min/max)
-  - Publication date range
-  - Submission deadline range
-  - Procedure type (Open, Restricted, Negotiated)
-- Sort by: relevance, publication date, deadline, contract value
+**Not built:**
+- Alert frequency setting (instant/daily/weekly)
+- Agent-style per-profile notification controls
 
-**Results list:**
-- Tender title, buyer name, country flag, CPV badge, publication date, deadline
-- Contract value (if published)
-- AI relevance score badge (Pro tier) — 1–10 based on saved agent criteria
-- "Save to pipeline" quick action
-- "Follow buyer" quick action
+### 4.5 Email Alerts — PARTIAL
+**Built:**
+- Daily cron: ingest-ted → match-and-notify pipeline
+- Notification system (notified flag, notified_at timestamp)
 
-**Freemium gate:** Free tier: 20 results/day, no relevance scoring. Pro: unlimited.
+**Not built:**
+- Resend email templates with tender cards
+- Configurable frequency (instant/daily/weekly digest)
+- One-click unsubscribe per profile
 
----
+### 4.6 Mobile Push Notifications — NOT STARTED
+- PWA Web Push via VAPID
+- Push subscription storage
+- Instant alerts for followed profiles
 
-### 4.3 Tender Detail Page
+### 4.7 Bid Pipeline — NOT STARTED
+- Kanban view (Qualifying → Go/No-Go → Bidding → Submitted → Won/Lost)
+- List view with sortable table
+- Bid detail workspace (linked tender, notes, files, activity log)
+- Go/No-Go decision log
 
-**Purpose:** Full tender information plus AI-generated intelligence layer.
+### 4.8 Followed Buyers — BUILT
+- Search and follow contracting authorities
+- Buyer list page
+- TED search terms per buyer
 
-**Sections:**
-- **Header:** Title, buyer, reference number, CPV codes, publication/deadline dates, contract value, procedure type
-- **AI Summary** (Pro): 3–5 bullet point summary of key requirements, eligibility criteria, and evaluation factors — generated on demand via Claude API from the tender XML
-- **AI Relevance Assessment** (Pro): Short paragraph explaining why this tender is/isn't a fit relative to the user's saved agent criteria
-- **Full notice:** Rendered HTML of the original TED notice (all official languages supported)
-- **Documents:** Links to attached procurement documents
-- **Actions:**
-  - Add to pipeline (with stage selector)
-  - Follow buyer
-  - Share with team member
-  - Export to PDF
-- **Team activity:** Comments thread visible to workspace members
+**Not built:**
+- Buyer profile page (recent notices, award history)
+- Alert on new notices from followed buyer
+- Dashboard widget for buyer activity
 
----
+### 4.9 Team Collaboration — NOT STARTED
+- Workspace model with roles (Admin, Member, Viewer)
+- Shared agents, pipeline, followed buyers
+- Invite by email
+- Row-level security per workspace
 
-### 4.4 Search Agents
+### 4.10 Backfill & Ingestion — BUILT
+- Manual backfill (1–90 days, triggered from UI)
+- Daily cron ingestion (EU-wide, no filters)
+- Shared `tenders` table with upsert on conflict
+- Paginated Supabase queries (handles 3000+ tenders)
+- Diagnostic logging (score distribution, cache stats, Stage 1/2 metrics)
 
-**Purpose:** Persistent, automated saved searches that run on a schedule and alert the user to new matches.
-
-**Agent configuration:**
-- Name (e.g. "Naval vessels Denmark")
-- Keywords (include / exclude)
-- CPV codes (one or many)
-- Countries
-- Contracting authorities (optional)
-- Contract value range
-- Notice types
-- Alert frequency: instant, daily digest, weekly digest
-
-**Agent list view:**
-- Name, last run, matches (today / all time), active/paused toggle
-- Quick-edit and delete
-
-**Freemium gate:** Free: 2 agents, daily digest only. Pro: unlimited agents, instant alerts.
-
----
-
-### 4.5 Email Alerts
-
-**Purpose:** Notify users of new tender matches without requiring them to open the app.
-
-**Implementation:**
-- Supabase Edge Function polls TED search API every hour using each active agent's parameters
-- New matches stored in `tender_matches` table
-- Supabase pg_cron triggers alert job based on agent frequency setting
-- Resend sends React Email template:
-  - Subject: "3 new tenders match [Agent Name]"
-  - Body: summary cards for each match (title, buyer, deadline, value, AI summary snippet)
-  - CTA: "View in TenderRadar" deeplink
-
-**Unsubscribe:** One-click unsubscribe per agent, managed in settings.
-
----
-
-### 4.6 Mobile Push Notifications
-
-**Purpose:** Real-time alerts on mobile and desktop without email friction.
-
-**Implementation:**
-- PWA Web Push via VAPID keys, handled by Next.js API route `/api/push/send`
-- User subscribes to push on first login (permission prompt)
-- Subscription stored in Supabase `push_subscriptions` table
-- Same alert job that sends email also triggers push for instant-frequency agents
-- Push payload: tender title, buyer, deadline — tap opens tender detail
-
-**Freemium gate:** Free: push for daily digest only. Pro: instant push.
-
----
-
-### 4.7 Bid Pipeline
-
-**Purpose:** CRM-style workspace to manage tenders from qualification through to outcome.
-
-**Stages (customisable):**
-1. Qualifying
-2. Go / No-Go
-3. Bidding
-4. Submitted
-5. Won / Lost
-
-**Kanban view:** Drag-and-drop cards between stages. Card shows title, buyer, deadline, assigned team member, estimated value.
-
-**List view:** Sortable table with all fields visible. Bulk actions (move stage, assign, export).
-
-**Bid record (detail):**
-- Linked TED tender
-- Internal reference / title
-- Stage + status
-- Assigned owner + collaborators
-- Estimated contract value (internal estimate, may differ from published value)
-- Submission deadline with countdown
-- Go/No-Go decision log (with rationale)
-- Notes / comments thread (team-visible)
-- File attachments (via Supabase Storage)
-- Activity log (stage changes, comments, assignments)
-
-**Freemium gate:** Free: 3 active bids. Pro: unlimited.
-
----
-
-### 4.8 Followed Buyers
-
-**Purpose:** Track specific contracting authorities regardless of search agents — useful for key target clients.
-
-**Features:**
-- Search and follow any buyer from TED's authority register
-- Buyer profile page: name, country, recent notices, award history
-- Alert when followed buyer publishes any new notice
-- On dashboard: "Buyers with activity this week" widget
-
----
-
-### 4.9 Team Collaboration (Workspace)
-
-**Purpose:** Shared environment for BD teams to work together on discovery and pipeline.
-
-**Workspace model:**
-- Each account belongs to one workspace
-- Workspace has members with roles: Admin, Member, Viewer
-- Agents, pipeline, and followed buyers are workspace-scoped (shared by default)
-- Personal agents can be flagged as private
-
-**Invitation flow:**
-- Admin invites by email
-- Invited user creates account and joins workspace
-- Supabase row-level security enforces workspace isolation
-
-**Freemium gate:** Free: 1 user (solo). Pro: up to 5 seats. Enterprise: unlimited.
+### 4.11 Onboarding Wizard — BUILT
+- Multi-step wizard: basics → sectors → buyers → tenders → review → done
+- AI-generated CPV codes and keywords from company description
+- TED API preview with Claude re-rank (shared scoring pipeline)
+- Ingests preview tenders into shared pool
+- BackfillButton to populate feed after profile creation
 
 ---
 
@@ -238,115 +176,118 @@ TED is comprehensive but painful to use: raw search UX, no persistent filters, n
 
 | Feature | Free | Pro (€49/mo) | Enterprise |
 |---|---|---|---|
-| Search agents | 2 | Unlimited | Unlimited |
+| Monitoring profiles | 2 | Unlimited | Unlimited |
 | Alert frequency | Daily only | Instant | Instant |
-| AI summaries | — | ✓ | ✓ |
-| AI relevance scoring | — | ✓ | ✓ |
+| AI summaries | — | Yes | Yes |
+| AI relevance scoring | — | Yes | Yes |
 | Active pipeline bids | 3 | Unlimited | Unlimited |
 | Discovery results/day | 20 | Unlimited | Unlimited |
 | Team members | 1 | 5 | Unlimited |
 | Push notifications | Daily | Instant | Instant |
 | Data history | 7 days | 90 days | Unlimited |
 
+**Status:** Stripe integration built (webhooks, pricing page). Freemium gates not yet enforced in app.
+
 ---
 
-## 6. Data Model (Supabase)
+## 6. Data Model (Supabase) — Current
 
 ```sql
--- Core entities
-workspaces          (id, name, plan, stripe_customer_id, created_at)
-users               (id, workspace_id, email, role, push_subscription)
-agents              (id, workspace_id, created_by, name, filters_json, alert_frequency, active)
-tenders             (id, ted_reference, title, buyer, country, cpv_codes, value, deadline, published_at, xml_url, summary_ai, fetched_at)
-tender_matches      (id, agent_id, tender_id, score_ai, matched_at, alerted)
-pipeline_bids       (id, workspace_id, tender_id, stage, owner_id, value_estimate, go_nogo, notes)
-bid_comments        (id, bid_id, user_id, body, created_at)
-bid_files           (id, bid_id, user_id, storage_path, filename)
-followed_buyers     (id, workspace_id, ted_buyer_id, buyer_name)
-push_subscriptions  (id, user_id, endpoint, keys_json)
+-- BUILT
+monitoring_profiles    (id, user_id, name, cpv_codes[], keywords[], exclude_keywords[],
+                        countries[], min_value_eur, max_value_eur, active, created_at)
+tenders               (id, source, external_id, title, description, buyer_name,
+                        buyer_country, cpv_codes[], procedure_type, tender_type,
+                        estimated_value_eur, currency, submission_deadline,
+                        publication_date, document_url, ted_url, language,
+                        ai_summary, ai_summary_generated_at, raw_data, created_at)
+matches               (id, tender_id, profile_id, user_id, relevance_score,
+                        matched_cpv[], matched_keywords[], ai_reason,
+                        notified, notified_at, seen, bookmarked, created_at)
+followed_buyers       (id, user_id, buyer_name, buyer_country, ted_search_term, created_at)
+
+-- NOT YET BUILT
+workspaces            (id, name, plan, stripe_customer_id)
+pipeline_bids         (id, workspace_id, tender_id, stage, owner_id, value_estimate, ...)
+bid_comments          (id, bid_id, user_id, body, created_at)
+bid_files             (id, bid_id, user_id, storage_path, filename)
+push_subscriptions    (id, user_id, endpoint, keys_json)
 ```
 
 ---
 
-## 7. PWA Configuration
+## 7. Design Direction
 
-**manifest.json:**
-- `display: standalone`
-- App icons (192px, 512px, maskable)
-- Theme colour matching brand
-- `start_url: /app/dashboard`
+**Current state:** Light theme with clean card-based layout. Functional but not yet matching the spec's "dark-first intelligence tool" aesthetic.
 
-**Service Worker:**
-- Offline shell for `/app/dashboard` and `/app/pipeline`
-- Background sync for push notification delivery
-- Cache strategy: network-first for API, cache-first for static assets
-
-**Install prompt:** Custom "Add to Home Screen" banner shown after 2nd login session.
-
----
-
-## 8. Design Direction
-
-**Aesthetic:** Refined intelligence tool — dark-first, high information density, confident typography. Think Bloomberg Terminal meets Linear. Not a colourful consumer app.
-
-**Palette:**
+**Spec target:**
 - Background: deep navy `#0A0F1E`
 - Surface: `#111827`
 - Accent: electric blue `#2563EB`
-- Success/Won: `#10B981`
-- Warning/Deadline: `#F59E0B`
-- Danger/Lost: `#EF4444`
-- Text primary: `#F9FAFB`
-- Text secondary: `#6B7280`
-
-**Typography:**
-- Display / headings: **Syne** (geometric, distinctive)
-- Body / data: **IBM Plex Sans** (legible, technical credibility)
-
-**Key UX principles:**
-- Zero unnecessary clicks to reach new matches
-- Deadlines always prominent — urgency is the product
-- AI features feel native, not bolted on
-- Mobile experience first-class — field BD teams use phones
+- Typography: Syne (headings) + IBM Plex Sans (body)
+- High information density, Bloomberg Terminal meets Linear
 
 ---
 
-## 9. Build Phases
+## 8. Build Phases — Updated
 
-### Phase 1 — Foundation (Week 1–2)
-- Next.js project setup, Supabase schema, auth (magic link + Google)
-- PWA manifest + service worker baseline
+### Phase 1 — Foundation: COMPLETE
+- Next.js setup, Supabase schema, auth
 - TED API integration (search + notice fetch)
-- Basic discover page with filters
-- Tender detail page (no AI yet)
+- Tender feed and detail pages
+- Demo mode
 
-### Phase 2 — Core Value (Week 3–4)
-- Search agents (create, edit, run)
-- Supabase Edge Function: hourly TED polling
-- Email alerts via Resend
-- AI tender summary (Claude API integration)
+### Phase 2 — Core Value: MOSTLY COMPLETE
+- Monitoring profiles with AI wizard (replaces search agents)
+- Two-stage matching pipeline (CPV/keyword + Claude re-rank)
+- AI tender summaries (Claude API)
+- AI one-liner reasons on feed cards
 - Dashboard v1
+- Daily cron: ingest → match → notify
+- Manual backfill
 
-### Phase 3 — Pipeline + Team (Week 5–6)
+### Phase 3 — Pipeline + Team: NOT STARTED
 - Bid pipeline (kanban + list)
 - Bid detail workspace
 - Team invitations + workspace RLS
-- Followed buyers
+- Followed buyers (profile page, alerts)
 
-### Phase 4 — Polish + Monetisation (Week 7–8)
-- Push notifications (VAPID)
-- Stripe integration + freemium gates
-- AI relevance scoring
-- Mobile UX refinement
-- Landing page
+### Phase 4 — Polish + Monetisation: PARTIAL
+- Stripe integration: BUILT
+- Pricing page: BUILT
+- Freemium gates: NOT ENFORCED
+- Push notifications: NOT STARTED
+- Dark theme: NOT STARTED
+- Landing page: BUILT
+- Mobile refinement: NOT STARTED
 
 ---
 
-## 10. Open Questions to Resolve Before Build
+## 9. Recommended Next Steps (Priority Order)
 
-1. **Brand name** — is TenderRadar a working title or final?
-2. **AI relevance scoring** — should this be per-agent (scored against agent criteria) or per-user-profile (scored against a broader company profile)?
-3. **TED API rate limits** — the free TED API has fair-use constraints. At scale, do we need to cache aggressively or negotiate enterprise access?
-4. **eForms vs legacy XML** — TED switched to eForms in Nov 2022. The spec assumes both schemas must be handled. Confirm this is in scope for v1.
-5. **GDPR / data residency** — Supabase EU region (Frankfurt) should be selected. Confirm no additional requirements for enterprise customers.
-6. **Languages** — TED notices are in all EU official languages. Is v1 English-only UI with multilingual notice rendering, or full i18n?
+### High Impact — Revenue Enablers
+1. **Enforce freemium gates** — limit profiles, AI summaries, and history by plan tier
+2. **Email alerts via Resend** — daily digest with tender cards and deeplinks (key retention driver)
+3. **Tender Discovery page** — full-text TED search independent of profiles (core value prop)
+
+### Medium Impact — Product Completeness
+4. **Bid Pipeline** — kanban + list view, basic bid workspace (Phase 3 core)
+5. **Buyer profiles** — show recent notices and award history for followed buyers
+6. **Alert frequency controls** — instant/daily/weekly per profile
+
+### Lower Priority — Polish
+7. **Dark theme** — match spec design direction
+8. **Push notifications** — PWA Web Push
+9. **Team/workspace features** — multi-user collaboration
+10. **Mobile UX refinement** — responsive optimizations
+
+---
+
+## 10. Open Questions
+
+1. ~~Brand name~~ → **TenderWatch** (resolved)
+2. ~~AI relevance scoring~~ → **Per-profile** with learned signals from followed tenders (resolved)
+3. **TED API rate limits** — currently doing broad EU-wide ingestion. At scale, may need caching strategy or enterprise TED access.
+4. **eForms vs legacy XML** — current parser handles TED v3 API format. Legacy XML not in scope.
+5. **GDPR / data residency** — Supabase region TBD. Confirm for enterprise customers.
+6. **Languages** — UI is English-only. TED notices rendered in original language with English preferred.

@@ -72,6 +72,7 @@ export async function GET(request: NextRequest) {
           submission_deadline: tender.submission_deadline,
           relevance_score: m.relevance_score,
           cpv_codes: tender.cpv_codes,
+          ai_reason: m.ai_reason,
         }
       }).sort((a, b) => b.relevance_score - a.relevance_score)
 
