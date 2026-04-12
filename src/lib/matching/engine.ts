@@ -90,6 +90,35 @@ async function fetchLearnedSignalsByUser(
   return out
 }
 
+// Fetch followed tender titles per user — shown to Claude so it learns
+// what the user actually cares about.
+async function fetchFollowedTitlesByUser(
+  supabase: SupabaseSrv,
+  userIds: string[]
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>()
+  if (userIds.length === 0) return out
+
+  const { data } = await supabase
+    .from('matches')
+    .select('user_id, tender:tenders(title)')
+    .in('user_id', userIds)
+    .eq('bookmarked', true)
+
+  if (!data) return out
+
+  for (const row of data as Array<{
+    user_id: string
+    tender: { title: string | null } | null
+  }>) {
+    if (!row.tender?.title) continue
+    const list = out.get(row.user_id) || []
+    list.push(row.tender.title)
+    out.set(row.user_id, list)
+  }
+  return out
+}
+
 interface RerankCandidate {
   tender_id: string
   profile_id: string
@@ -114,6 +143,7 @@ interface ProfileSnapshot {
   keywords: string[]
   cpv_codes: string[]
   exclude_keywords: string[]
+  followedTitles: string[]
 }
 
 interface AiResult { score: number; why: string | null }
@@ -132,7 +162,10 @@ async function aiRerank(
     (profile.description ? `Description: ${profile.description}\n` : '') +
     `Topic keywords: ${profile.keywords.slice(0, 12).join(', ') || '(none)'}\n` +
     `CPV codes (8-digit): ${profile.cpv_codes.slice(0, 12).join(', ') || '(none)'}\n` +
-    `Excluded terms: ${profile.exclude_keywords.join(', ') || '(none)'}`
+    `Excluded terms: ${profile.exclude_keywords.join(', ') || '(none)'}` +
+    (profile.followedTitles.length > 0
+      ? `\n\nTenders this user has previously followed (use these to understand what they care about):\n${profile.followedTitles.slice(0, 10).map(t => `- ${t}`).join('\n')}`
+      : '')
 
   for (let offset = 0; offset < candidates.length; offset += AI_BATCH_SIZE) {
     const batch = candidates.slice(offset, offset + AI_BATCH_SIZE)
@@ -282,6 +315,7 @@ export async function matchNewTenders(
 
   const userIds = [...new Set(profiles.map(p => p.user_id))]
   const learnedByUser = await fetchLearnedSignalsByUser(supabase, userIds)
+  const followedByUser = await fetchFollowedTitlesByUser(supabase, userIds)
 
   // Stage 1: cheap candidate generation
   const candidatesByProfile = new Map<string, RerankCandidate[]>()
@@ -396,6 +430,7 @@ export async function matchNewTenders(
         keywords: profile.keywords || [],
         cpv_codes: profile.cpv_codes || [],
         exclude_keywords: profile.exclude_keywords || [],
+        followedTitles: followedByUser.get(profile.user_id) || [],
       },
       topN
     )
