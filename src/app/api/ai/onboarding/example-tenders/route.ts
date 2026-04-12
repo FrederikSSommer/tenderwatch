@@ -1,8 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { createClient } from '@supabase/supabase-js'
+import type { Database } from '@/lib/supabase/types'
+import { calculateRelevance } from '@/lib/ai/relevance-score'
 
-function getClient() {
+function getAI() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
+}
+
+function getServiceClient() {
+  return createClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  )
 }
 
 const TED_API_BASE = 'https://api.ted.europa.eu/v3'
@@ -24,6 +34,12 @@ const COUNTRY_MAP: Record<string, string> = {
   'AT': 'AUT', 'PT': 'PRT', 'IE': 'IRL', 'CZ': 'CZE',
   'RO': 'ROU', 'BG': 'BGR', 'HR': 'HRV', 'LT': 'LTU',
   'LV': 'LVA', 'EE': 'EST',
+}
+
+const COUNTRY_LANG: Record<string, string> = {
+  DK: 'Danish', NO: 'Norwegian', SE: 'Swedish', DE: 'German',
+  NL: 'Dutch', FI: 'Finnish', FR: 'French', PL: 'Polish',
+  ES: 'Spanish', IT: 'Italian', BE: 'French/Dutch',
 }
 
 function extractMultilingual(obj: unknown): string | null {
@@ -83,6 +99,20 @@ function parseTender(n: Record<string, unknown>) {
   }
 }
 
+function getBuyerFilter(buyer: Record<string, unknown>): string | null {
+  const searchTerms = buyer.searchTerms as string[] | undefined
+  if (searchTerms && searchTerms.length > 0) {
+    return searchTerms.map((t: string) => `FT~"${t}"`).join(' AND ')
+  }
+  const name = (typeof buyer === 'string' ? buyer : buyer.name) as string
+  if (!name) return null
+  const skipWords = new Set(['and', 'the', 'for', 'of', 'de', 'des', 'du', 'og', 'for', 'der', 'die', 'und'])
+  const words = name.split(/[\s,.-]+/).filter((w: string) => w.length > 5 && !skipWords.has(w.toLowerCase()))
+  return words[0] ? `FT~"${words[0]}"` : null
+}
+
+// ─── Main handler ──────────────────────────────────────────────────────
+
 export async function POST(request: NextRequest) {
   const { description, sectors, subsectors, countries, buyers } = await request.json()
 
@@ -90,18 +120,12 @@ export async function POST(request: NextRequest) {
   sinceDate.setDate(sinceDate.getDate() - 60)
   const dateStr = sinceDate.toISOString().split('T')[0].replace(/-/g, '')
 
-  // Map country codes to language names for native keyword generation
-  const COUNTRY_LANG: Record<string, string> = {
-    DK: 'Danish', NO: 'Norwegian', SE: 'Swedish', DE: 'German',
-    NL: 'Dutch', FI: 'Finnish', FR: 'French', PL: 'Polish',
-    ES: 'Spanish', IT: 'Italian', BE: 'French/Dutch',
-  }
   const targetLangs = (countries || []).map((c: string) => COUNTRY_LANG[c]).filter(Boolean)
   const langNote = targetLangs.length > 0
-    ? `\nIMPORTANT: Many tenders on TED are titled in the local language. Include keywords in ${targetLangs.join(', ')} as well. For example, Danish maritime tenders use words like "fartøj" (vessel), "værft" (shipyard), "marine", "sejlende" (sailing).`
+    ? `\nIMPORTANT: Many tenders on TED are titled in the local language. Include keywords in ${targetLangs.join(', ')} as well.`
     : ''
 
-  // Step 1: Ask Claude for CPV codes and keywords (NOT TED query syntax)
+  // ── Step 1: Ask Claude for CPV codes and keywords ──────────────────
   const prompt = `You are an EU procurement expert. Based on these interests, suggest CPV codes and search keywords.
 
 Company: "${description}"
@@ -125,177 +149,185 @@ native_keywords: 3-6 keywords in the local language(s) of the target countries t
   let keywords: string[] = []
 
   try {
-    const message = await getClient().messages.create({
+    const message = await getAI().messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 400,
       messages: [{ role: 'user', content: prompt }],
     })
-
     const text = message.content[0].type === 'text' ? message.content[0].text : '{}'
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0])
       cpvPrefixes = parsed.cpv_2digit || []
-      // Combine English + native keywords for broader search
       keywords = [...(parsed.keywords || []), ...(parsed.native_keywords || [])]
     }
   } catch {
-    // If Claude fails, use a generic approach
     keywords = (sectors || []).slice(0, 3)
   }
 
-  // Step 2: Build TED queries with known-good syntax
+  // ── Step 2: Broad TED fetch ────────────────────────────────────────
   const tedCountries = (countries || [])
     .map((c: string) => COUNTRY_MAP[c] || c)
     .filter(Boolean)
 
-  // Helper: extract buyer search filter from buyer object
-  function getBuyerFilter(buyer: Record<string, unknown>): string | null {
-    const searchTerms = buyer.searchTerms as string[] | undefined
-    if (searchTerms && searchTerms.length > 0) {
-      return searchTerms.map((t: string) => `FT~"${t}"`).join(' AND ')
-    }
-    const name = (typeof buyer === 'string' ? buyer : buyer.name) as string
-    if (!name) return null
-    const skipWords = new Set(['and', 'the', 'for', 'of', 'de', 'des', 'du', 'og', 'for', 'der', 'die', 'und'])
-    const words = name.split(/[\s,.-]+/).filter((w: string) => w.length > 5 && !skipWords.has(w.toLowerCase()))
-    return words[0] ? `FT~"${words[0]}"` : null
-  }
+  const queries: string[] = []
 
-  // Build queries in priority tiers — each tier gets its own bucket to ensure diversity
-  const queryTiers: string[][] = [[], [], [], []]
-
-  // Tier 0 (BEST): Buyer + topic keywords — use ALL keywords (English + native) for max coverage
-  if (buyers && buyers.length > 0 && keywords.length > 0) {
-    // Use up to 8 keywords to cast a wide net within buyer results
-    const kwFilter = keywords.slice(0, 8).map(k => `FT~"${k}"`).join(' OR ')
-    for (const buyer of buyers.slice(0, 4)) {
-      const bf = getBuyerFilter(buyer as Record<string, unknown>)
-      const buyerCountry = COUNTRY_MAP[(buyer as Record<string, unknown>).country as string] || (buyer as Record<string, unknown>).country
-      if (!bf) continue
-      if (buyerCountry) {
-        queryTiers[0].push(`PD>=${dateStr} AND ${bf} AND (${kwFilter}) AND organisation-country-buyer=${buyerCountry}`)
-      } else {
-        queryTiers[0].push(`PD>=${dateStr} AND ${bf} AND (${kwFilter})`)
-      }
-    }
-  }
-
-  // Tier 0b: Buyer + CPV codes
-  if (buyers && buyers.length > 0 && cpvPrefixes.length > 0) {
-    const cpvFilter = cpvPrefixes.slice(0, 3).map(c => `classification-cpv=${c}*`).join(' OR ')
-    for (const buyer of buyers.slice(0, 3)) {
-      const bf = getBuyerFilter(buyer as Record<string, unknown>)
-      const buyerCountry = COUNTRY_MAP[(buyer as Record<string, unknown>).country as string] || (buyer as Record<string, unknown>).country
-      if (!bf) continue
-      if (buyerCountry) {
-        queryTiers[0].push(`PD>=${dateStr} AND ${bf} AND (${cpvFilter}) AND organisation-country-buyer=${buyerCountry}`)
-      } else {
-        queryTiers[0].push(`PD>=${dateStr} AND ${bf} AND (${cpvFilter})`)
-      }
-    }
-  }
-
-  // Tier 1: CPV-based with country filter (topic-relevant, no specific buyer)
+  // CPV-based queries
   if (cpvPrefixes.length > 0) {
     const cpvFilter = cpvPrefixes.slice(0, 4).map(c => `classification-cpv=${c}*`).join(' OR ')
     if (tedCountries.length > 0 && tedCountries.length <= 5) {
       const countryFilter = tedCountries.map((c: string) => `organisation-country-buyer=${c}`).join(' OR ')
-      queryTiers[1].push(`PD>=${dateStr} AND (${cpvFilter}) AND (${countryFilter})`)
+      queries.push(`PD>=${dateStr} AND (${cpvFilter}) AND (${countryFilter})`)
     }
-    queryTiers[1].push(`PD>=${dateStr} AND (${cpvFilter})`)
+    queries.push(`PD>=${dateStr} AND (${cpvFilter})`)
   }
 
-  // Tier 1b: Keyword search with country
-  if (keywords.length > 0 && tedCountries.length > 0) {
-    const kwFilter = keywords.slice(0, 4).map(k => `FT~"${k}"`).join(' OR ')
-    const countryFilter = tedCountries.map((c: string) => `organisation-country-buyer=${c}`).join(' OR ')
-    queryTiers[1].push(`PD>=${dateStr} AND (${kwFilter}) AND (${countryFilter})`)
-  }
-
-  // Tier 2: Buyer-only (broad — all tenders from that org, no topic filter)
-  if (buyers && buyers.length > 0) {
-    for (const buyer of buyers.slice(0, 3)) {
-      const bf = getBuyerFilter(buyer as Record<string, unknown>)
-      const buyerCountry = COUNTRY_MAP[(buyer as Record<string, unknown>).country as string] || (buyer as Record<string, unknown>).country
-      if (!bf) continue
-      if (buyerCountry) {
-        queryTiers[2].push(`PD>=${dateStr} AND ${bf} AND organisation-country-buyer=${buyerCountry}`)
-      } else {
-        queryTiers[2].push(`PD>=${dateStr} AND ${bf}`)
-      }
-    }
-  }
-
-  // Tier 3: Keywords only (broadest fallback)
+  // Keyword-based queries
   if (keywords.length > 0) {
-    const kwFilter = keywords.slice(0, 3).map(k => `FT~"${k}"`).join(' OR ')
-    queryTiers[3].push(`PD>=${dateStr} AND (${kwFilter})`)
+    const kwFilter = keywords.slice(0, 6).map(k => `FT~"${k}"`).join(' OR ')
+    if (tedCountries.length > 0) {
+      const countryFilter = tedCountries.map((c: string) => `organisation-country-buyer=${c}`).join(' OR ')
+      queries.push(`PD>=${dateStr} AND (${kwFilter}) AND (${countryFilter})`)
+    }
+    queries.push(`PD>=${dateStr} AND (${kwFilter})`)
   }
 
-  // Step 3: Fetch from TED — collect results per tier, then interleave for diversity
-  const tierResults: Record<string, unknown>[][] = [[], [], [], []]
-  const seenIds = new Set<string>()
-
-  for (let tier = 0; tier < queryTiers.length; tier++) {
-    for (const query of queryTiers[tier]) {
-      // Tier 0 (buyer+topic) gets more results since they're most targeted
-      const fetchLimit = tier === 0 ? 15 : 8
-      const notices = await searchTED(query, fetchLimit)
-      for (const notice of notices) {
-        const id = notice['publication-number'] as string
-        if (id && !seenIds.has(id)) {
-          seenIds.add(id)
-          tierResults[tier].push(notice)
-        }
+  // Buyer-specific queries
+  if (buyers && buyers.length > 0) {
+    for (const buyer of buyers.slice(0, 4)) {
+      const bf = getBuyerFilter(buyer as Record<string, unknown>)
+      if (!bf) continue
+      const buyerCountry = COUNTRY_MAP[(buyer as Record<string, unknown>).country as string] || (buyer as Record<string, unknown>).country
+      if (buyerCountry) {
+        queries.push(`PD>=${dateStr} AND ${bf} AND organisation-country-buyer=${buyerCountry}`)
+      } else {
+        queries.push(`PD>=${dateStr} AND ${bf}`)
       }
-      await new Promise(r => setTimeout(r, 300))
     }
   }
 
-  // Interleave broadly — fetch a wider candidate pool, AI will filter for relevance
-  const limits = [15, 10, 5, 3]
-  const candidatesRaw: Record<string, unknown>[] = []
-  for (let tier = 0; tier < tierResults.length; tier++) {
-    candidatesRaw.push(...tierResults[tier].slice(0, limits[tier]))
+  // Fetch and deduplicate
+  const seenIds = new Set<string>()
+  const allNotices: Record<string, unknown>[] = []
+  for (const query of queries) {
+    const notices = await searchTED(query, 20)
+    for (const notice of notices) {
+      const id = notice['publication-number'] as string
+      if (id && !seenIds.has(id)) {
+        seenIds.add(id)
+        allNotices.push(notice)
+      }
+    }
+    await new Promise(r => setTimeout(r, 200))
   }
 
-  const candidates = candidatesRaw.slice(0, 30).map(parseTender)
+  const candidates = allNotices.map(parseTender)
 
-  // Step 4: AI relevance filtering — let Claude actually evaluate which tenders match the company
+  // ── Step 3: Ingest into tenders table (so backfill can use them) ───
+  const supabase = getServiceClient()
   if (candidates.length > 0) {
+    const rows = candidates.map(t => ({
+      source: 'ted' as const,
+      external_id: t.id,
+      title: t.title,
+      description: t.description,
+      buyer_name: t.buyerName,
+      buyer_country: t.buyerCountry,
+      cpv_codes: t.cpvCodes,
+      estimated_value_eur: t.estimatedValue,
+      publication_date: t.publicationDate || new Date().toISOString().split('T')[0],
+      ted_url: t.tedUrl,
+      notice_type: t.noticeType,
+    }))
     try {
+      await supabase.from('tenders').upsert(rows, { onConflict: 'source,external_id' })
+    } catch { /* best-effort — don't block wizard if DB write fails */ }
+  }
+
+  // ── Step 4: Pre-filter with keyword/CPV prefix matching ─────────────
+  // Instead of calculateRelevance (which needs full 8-digit CPV codes we
+  // don't have yet), do a simpler prefix + keyword check directly.
+  const cpvPrefixSet = new Set(cpvPrefixes) // 2-digit prefixes like "34", "71"
+  const kwLower = keywords.map(k => k.toLowerCase())
+
+  const scored = candidates.map(t => {
+    let score = 0
+    const titleLower = t.title.toLowerCase()
+    const descLower = (t.description || '').toLowerCase()
+
+    // CPV prefix match (any tender CPV starting with a profile prefix)
+    const cpvMatch = t.cpvCodes.some(c => cpvPrefixes.some(p => c.startsWith(p)))
+    if (cpvMatch) score += 20
+
+    // Keyword match in title (strong) or description (weaker)
+    for (const kw of kwLower) {
+      if (titleLower.includes(kw)) { score += 15; break }
+      if (descLower.includes(kw)) { score += 8; break }
+    }
+
+    // Country match (only if topic signal exists)
+    if (score > 0 && t.buyerCountry) {
+      const tedCountrySet = new Set(
+        (countries || []).map((c: string) => COUNTRY_MAP[c] || c)
+      )
+      if (tedCountrySet.has(t.buyerCountry)) score += 10
+    }
+
+    return { tender: t, stage1: score }
+  })
+
+  // Keep anything with at least a CPV or keyword match
+  const stage1Pass = scored
+    .filter(s => s.stage1 >= 8)
+    .sort((a, b) => b.stage1 - a.stage1)
+    .slice(0, 50)
+
+  // ── Step 5: Claude re-rank (same prompt as shared engine) ──────────
+  if (stage1Pass.length > 0) {
+    try {
+      const profileDesc =
+        `Company: ${description}\n` +
+        `Sectors: ${(sectors || []).join(', ')}\n` +
+        `Keywords: ${keywords.slice(0, 10).join(', ')}\n` +
+        `CPV prefixes: ${cpvPrefixes.join(', ')}`
+
       const filterPrompt = `You are evaluating which public tenders are relevant for a company.
 
-Company: "${description}"
-Sectors of interest: ${(sectors || []).join(', ')}
-${(subsectors || []).length > 0 ? `Specific interests: ${(subsectors || []).join(', ')}` : ''}
+PROFILE
+${profileDesc}
 
-Below are real tenders. Rate each one's relevance to this specific company on a 0-10 scale.
-Be STRICT and LITERAL: if the company builds ships, hand guns are NOT relevant even if both are "defence". Cleaning supplies for a navy buyer are NOT relevant to a shipbuilder. Match the actual product or service the company offers, not just the buyer or sector.
+Be STRICT and LITERAL. Match the actual product or service the company would buy or sell, not just shared sectors. Examples of WRONG matches:
+- a shipbuilding profile with workwear, hand guns, or canteen catering tenders
+- a software/IT profile with office furniture or printer toner
+- a road construction profile with traffic-light bulbs
+A weak buyer/CPV overlap is NOT enough — the actual subject of the tender must align with the profile.
 
-${candidates.map((t, i) => `[${i}] "${t.title}"
-   Buyer: ${t.buyerName || '?'}${t.buyerCountry ? ` (${t.buyerCountry})` : ''}
-   CPV: ${t.cpvCodes.join(', ') || 'none'}
-   ${t.description ? t.description.slice(0, 250) : ''}`).join('\n\n')}
+CANDIDATES (numbered)
+${stage1Pass.map((s, i) => `[${i}] "${s.tender.title}"
+   Buyer: ${s.tender.buyerName || '?'}${s.tender.buyerCountry ? ` (${s.tender.buyerCountry})` : ''}
+   CPV: ${s.tender.cpvCodes.slice(0, 6).join(', ') || 'none'}
+   ${s.tender.description ? s.tender.description.slice(0, 220) : ''}`).join('\n\n')}
 
-Return ONLY a JSON array, ordered by score descending. Include only tenders scoring 5 or higher. Maximum 12 entries.
+Return ONLY a JSON array, ordered by score descending. Include only tenders scoring 5 or higher (0-10). Maximum 12 entries.
 Format: [{"i": 0, "score": 9, "why": "short reason"}, ...]`
 
-      const filterMessage = await getClient().messages.create({
+      const msg = await getAI().messages.create({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1500,
-        messages: [{ role: 'user', content: filterPrompt }],
+        messages: [
+          { role: 'user', content: filterPrompt },
+          { role: 'assistant', content: '[' },
+        ],
       })
 
-      const filterText = filterMessage.content[0].type === 'text' ? filterMessage.content[0].text : '[]'
-      const filterMatch = filterText.match(/\[[\s\S]*\]/)
-      if (filterMatch) {
-        const scored: { i: number; score: number; why?: string }[] = JSON.parse(filterMatch[0])
-        const filtered = scored
-          .filter(s => typeof s.i === 'number' && s.score >= 5 && s.i >= 0 && s.i < candidates.length)
+      const text = msg.content[0].type === 'text' ? '[' + msg.content[0].text : '[]'
+      const m = text.match(/\[[\s\S]*?\]/)
+      if (m) {
+        const aiScored: { i: number; score: number; why?: string }[] = JSON.parse(m[0])
+        const filtered = aiScored
+          .filter(s => typeof s.i === 'number' && s.score >= 5 && s.i >= 0 && s.i < stage1Pass.length)
           .map(s => ({
-            ...candidates[s.i],
+            ...stage1Pass[s.i].tender,
             relevanceScore: s.score,
             relevanceReason: s.why || null,
           }))
@@ -303,7 +335,7 @@ Format: [{"i": 0, "score": 9, "why": "short reason"}, ...]`
         if (filtered.length > 0) {
           return NextResponse.json({
             tenders: filtered,
-            queriesRun: queryTiers.flat().length,
+            queriesRun: queries.length,
             cpvPrefixes,
             keywords,
             filteredFrom: candidates.length,
@@ -311,15 +343,22 @@ Format: [{"i": 0, "score": 9, "why": "short reason"}, ...]`
         }
       }
     } catch (e) {
-      console.warn('AI relevance filter failed, falling back to raw results:', e)
+      console.warn('AI relevance filter failed, falling back to Stage-1 results:', e)
     }
   }
 
-  // Fallback: return top candidates unfiltered
+  // Fallback: return top Stage-1 candidates unfiltered
+  const fallback = stage1Pass.slice(0, 12).map(s => ({
+    ...s.tender,
+    relevanceScore: Math.round(s.stage1 / 10),
+    relevanceReason: null,
+  }))
+
   return NextResponse.json({
-    tenders: candidates.slice(0, 12),
-    queriesRun: queryTiers.flat().length,
+    tenders: fallback,
+    queriesRun: queries.length,
     cpvPrefixes,
     keywords,
+    filteredFrom: candidates.length,
   })
 }

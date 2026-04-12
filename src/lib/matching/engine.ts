@@ -19,11 +19,12 @@ export interface MatchResult {
 
 // Stage-1 (cheap) keyword/CPV threshold. The Stage-2 Claude rerank is the
 // real arbiter — Stage 1 just trims the candidate pool before AI cost.
-const STAGE1_THRESHOLD = 35
+// Set low (5) so any CPV or keyword signal at all passes through to Claude.
+const STAGE1_THRESHOLD = 5
 
 // Maximum number of Stage-1 candidates per profile that get sent to Claude
-// per run. Caps cost at ~4 batches × $0.024 ≈ $0.10 per profile per call.
-const AI_FILTER_CAP = 60
+// per run. Raised to 120 to give Claude more to work with.
+const AI_FILTER_CAP = 120
 
 // Batch size when calling Claude for relevance scoring
 const AI_BATCH_SIZE = 30
@@ -206,15 +207,35 @@ export async function matchNewTenders(
 ): Promise<MatchResult[]> {
   const supabase = opts.supabase ?? getDefaultClient()
 
-  const { data: tenders, error: tErr } = await supabase
-    .from('tenders')
-    .select('*')
-    .gte('publication_date', since.toISOString().split('T')[0])
+  // Fetch ALL tenders since the date. Supabase defaults to 1000 rows, so
+  // we paginate to ensure we get everything.
+  const sinceStr = since.toISOString().split('T')[0]
+  const allTenders: Database['public']['Tables']['tenders']['Row'][] = []
+  const PAGE_SIZE = 1000
+  let offset = 0
+  let fetchMore = true
+  while (fetchMore) {
+    const { data, error } = await supabase
+      .from('tenders')
+      .select('*')
+      .gte('publication_date', sinceStr)
+      .range(offset, offset + PAGE_SIZE - 1)
+    if (error) {
+      console.error('Failed to fetch tenders:', error)
+      return []
+    }
+    if (!data || data.length === 0) break
+    allTenders.push(...data)
+    offset += data.length
+    fetchMore = data.length === PAGE_SIZE
+  }
+  const tenders = allTenders
 
-  if (tErr || !tenders || tenders.length === 0) {
-    if (tErr) console.error('Failed to fetch tenders:', tErr)
+  if (tenders.length === 0) {
+    console.log('[matching] No tenders found since', sinceStr)
     return []
   }
+  console.log(`[matching] Fetched ${tenders.length} tenders since ${sinceStr}`)
 
   let profileQuery = supabase
     .from('monitoring_profiles')
@@ -229,25 +250,36 @@ export async function matchNewTenders(
   }
 
   // Cache: skip (profile, tender) pairs already evaluated
+  // Batch the query to avoid hitting PostgREST URL length limits with 3000+ IDs
   const profileIds = profiles.map(p => p.id)
   const tenderIds = tenders.map(t => t.id)
-  const { data: existing } = await supabase
-    .from('matches')
-    .select('profile_id, tender_id')
-    .in('profile_id', profileIds)
-    .in('tender_id', tenderIds)
-
   const seen = new Set<string>()
-  for (const r of existing || []) seen.add(`${r.profile_id}::${r.tender_id}`)
+  const CACHE_BATCH = 500
+  for (let i = 0; i < tenderIds.length; i += CACHE_BATCH) {
+    const batch = tenderIds.slice(i, i + CACHE_BATCH)
+    const { data: existing } = await supabase
+      .from('matches')
+      .select('profile_id, tender_id')
+      .in('profile_id', profileIds)
+      .in('tender_id', batch)
+    for (const r of existing || []) seen.add(`${r.profile_id}::${r.tender_id}`)
+  }
+  console.log(`[matching] Cache: ${seen.size} existing pairs will be skipped`)
 
   const userIds = [...new Set(profiles.map(p => p.user_id))]
   const learnedByUser = await fetchLearnedSignalsByUser(supabase, userIds)
 
   // Stage 1: cheap candidate generation
   const candidatesByProfile = new Map<string, RerankCandidate[]>()
+  let totalPairs = 0
+  let skippedCache = 0
+  let belowThreshold = 0
+  const scoreDistribution: Record<string, number> = { '0': 0, '1-9': 0, '10-19': 0, '20-29': 0, '30-39': 0, '40+': 0 }
+
   for (const tender of tenders) {
     for (const profile of profiles) {
-      if (seen.has(`${profile.id}::${tender.id}`)) continue
+      totalPairs++
+      if (seen.has(`${profile.id}::${tender.id}`)) { skippedCache++; continue }
       const result: ScoreResult = calculateRelevance(
         {
           cpv_codes: tender.cpv_codes,
@@ -266,7 +298,16 @@ export async function matchNewTenders(
         },
         learnedByUser.get(profile.user_id)
       )
-      if (result.score < STAGE1_THRESHOLD) continue
+
+      // Track score distribution for diagnostics
+      if (result.score === 0) scoreDistribution['0']++
+      else if (result.score < 10) scoreDistribution['1-9']++
+      else if (result.score < 20) scoreDistribution['10-19']++
+      else if (result.score < 30) scoreDistribution['20-29']++
+      else if (result.score < 40) scoreDistribution['30-39']++
+      else scoreDistribution['40+']++
+
+      if (result.score < STAGE1_THRESHOLD) { belowThreshold++; continue }
 
       const list = candidatesByProfile.get(profile.id) || []
       list.push({
@@ -289,11 +330,49 @@ export async function matchNewTenders(
     }
   }
 
+  const totalStage1Pass = [...candidatesByProfile.values()].reduce((s, c) => s + c.length, 0)
+  console.log('[matching] Stage 1 diagnostics:', {
+    totalTenders: tenders.length,
+    totalProfiles: profiles.length,
+    totalPairs,
+    skippedCache,
+    belowThreshold,
+    passedStage1: totalStage1Pass,
+    scoreDistribution,
+  })
+  // Log profile details for debugging
+  for (const profile of profiles) {
+    console.log(`[matching] Profile "${profile.name}":`, {
+      cpv_codes: profile.cpv_codes?.slice(0, 5),
+      keywords: profile.keywords?.slice(0, 8),
+      countries: profile.countries,
+    })
+  }
+  // Log sample tenders for debugging
+  if (tenders.length > 0) {
+    const sample = tenders.slice(0, 3)
+    for (const t of sample) {
+      console.log(`[matching] Sample tender "${t.title.slice(0, 60)}":`, {
+        cpv_codes: t.cpv_codes?.slice(0, 5),
+        buyer_country: t.buyer_country,
+      })
+    }
+  }
+
   // Stage 2: AI rerank per profile (capped)
   const matches: MatchResult[] = []
   for (const [profileId, candidates] of candidatesByProfile) {
     candidates.sort((a, b) => b.stage1_score - a.stage1_score)
     const topN = candidates.slice(0, AI_FILTER_CAP)
+    console.log(`[matching] Stage 2: profile ${profileId} — ${candidates.length} candidates, sending top ${topN.length} to Claude`)
+    if (topN.length > 0) {
+      console.log(`[matching] Top 5 Stage-1 candidates:`, topN.slice(0, 5).map(c => ({
+        title: c.tender.title.slice(0, 60),
+        score: c.stage1_score,
+        cpv: c.matched_cpv.slice(0, 3),
+        kw: c.matched_keywords.slice(0, 3),
+      })))
+    }
     const profile = profiles.find(p => p.id === profileId)!
     const aiScores = await aiRerank(
       {
@@ -305,6 +384,7 @@ export async function matchNewTenders(
       },
       topN
     )
+    console.log(`[matching] Claude rerank returned ${aiScores.size} accepted tenders`)
     for (const c of topN) {
       const ai = aiScores.get(c.tender_id)
       if (ai === undefined) continue

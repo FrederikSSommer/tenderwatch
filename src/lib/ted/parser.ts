@@ -50,10 +50,14 @@ export function parseTEDNotice(notice: Record<string, unknown>): ParsedTender | 
         ? countryRaw
         : null
 
-    // CPV codes — deduplicated
+    // CPV codes — deduplicated, normalised to 8 digits
     const cpvRaw = notice['classification-cpv']
     const cpvCodes = Array.isArray(cpvRaw)
-      ? [...new Set(cpvRaw.map(c => String(c).replace(/-\d$/, '')))]
+      ? [...new Set(cpvRaw.map(c => {
+          const stripped = String(c).replace(/-\d+$/, '')
+          // Pad to 8 digits (TED sometimes returns 7 or fewer)
+          return stripped.padEnd(8, '0')
+        }))]
       : []
 
     // Value

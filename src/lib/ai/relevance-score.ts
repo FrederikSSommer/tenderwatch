@@ -49,8 +49,13 @@ export function calculateRelevance(
   }
 
   // CPV code matching (max 40 points)
-  for (const tCpv of tender.cpv_codes) {
-    for (const pCpv of profile.cpv_codes) {
+  // Normalise both sides: strip trailing zeros and checksum for robust prefix matching
+  const normCpv = (c: string) => c.replace(/-\d+$/, '').padEnd(8, '0')
+  const tCpvNorm = tender.cpv_codes.map(normCpv)
+  const pCpvNorm = profile.cpv_codes.map(normCpv)
+
+  for (const tCpv of tCpvNorm) {
+    for (const pCpv of pCpvNorm) {
       if (tCpv === pCpv) {
         score += 40
         matched_cpv.push(tCpv)
@@ -61,6 +66,10 @@ export function calculateRelevance(
       } else if (tCpv.substring(0, 3) === pCpv.substring(0, 3)) {
         // Division-level match (first 3 digits)
         score += 10
+        matched_cpv.push(tCpv)
+      } else if (tCpv.substring(0, 2) === pCpv.substring(0, 2)) {
+        // Division-level match (first 2 digits — broadest category)
+        score += 5
         matched_cpv.push(tCpv)
       }
     }
