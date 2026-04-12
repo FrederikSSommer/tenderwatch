@@ -369,6 +369,7 @@ export function OnboardingWizardV2({
       const profileData = {
         companyName,
         country,
+        description,
         profile: generatedProfile,
         valueRange,
       }
