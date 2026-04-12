@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { formatDeadline } from '@/lib/utils/date'
 import { formatEUR } from '@/lib/utils/currency'
-import { Sparkles, Bookmark } from 'lucide-react'
+import { Sparkles, Bookmark, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import { createClient } from '@/lib/supabase/client'
 import { useState } from 'react'
@@ -23,6 +23,7 @@ interface TenderCardProps {
   matchedCpv: string[]
   matchedKeywords: string[]
   bookmarked: boolean
+  dismissed?: boolean
   matchId: string
   aiReason?: string | null
 }
@@ -45,12 +46,14 @@ export function TenderCard({
   matchedCpv,
   matchedKeywords,
   bookmarked,
+  dismissed: initialDismissed,
   matchId,
   aiReason,
 }: TenderCardProps) {
   const pathname = usePathname()
   const prefix = pathname.startsWith('/demo') ? '/demo' : ''
   const [followed, setFollowed] = useState(bookmarked)
+  const [dismissed, setDismissed] = useState(initialDismissed ?? false)
   const supabase = createClient()
 
   async function toggleFollow() {
@@ -61,6 +64,32 @@ export function TenderCard({
       .from('matches')
       .update({ bookmarked: newState })
       .eq('id', matchId)
+  }
+
+  async function handleDismiss() {
+    if (!matchId) return
+    setDismissed(true)
+    await supabase
+      .from('matches')
+      .update({ dismissed: true })
+      .eq('id', matchId)
+  }
+
+  if (dismissed) {
+    return (
+      <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 flex items-center justify-between">
+        <p className="text-sm text-gray-400 italic">Dismissed: {tender.title.slice(0, 60)}...</p>
+        <button
+          onClick={async () => {
+            setDismissed(false)
+            await supabase.from('matches').update({ dismissed: false }).eq('id', matchId)
+          }}
+          className="text-xs text-blue-600 hover:underline"
+        >
+          Undo
+        </button>
+      </div>
+    )
   }
 
   return (
@@ -139,6 +168,14 @@ export function TenderCard({
             <Sparkles className="h-3 w-3" />
             AI
           </Link>
+          <button
+            onClick={handleDismiss}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-400 hover:text-red-600 hover:border-red-200 hover:bg-red-50 transition-colors flex items-center gap-1"
+            title="Not relevant — dismiss and teach AI"
+          >
+            <X className="h-3 w-3" />
+            Dismiss
+          </button>
         </div>
       </div>
     </div>

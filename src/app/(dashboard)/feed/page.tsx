@@ -27,6 +27,7 @@ export default async function FeedPage({
       tender:tenders(*)
     `)
     .eq('user_id', user.id)
+    .eq('dismissed', false)
     .order('relevance_score', { ascending: false })
     .limit(50)
 
@@ -59,6 +60,7 @@ export default async function FeedPage({
               matchedCpv={match.matched_cpv}
               matchedKeywords={match.matched_keywords}
               bookmarked={match.bookmarked}
+              dismissed={match.dismissed}
               matchId={match.id}
               aiReason={match.ai_reason}
             />

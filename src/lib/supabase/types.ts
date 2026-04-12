@@ -212,6 +212,7 @@ export type Database = {
           notified_at: string | null
           seen: boolean
           bookmarked: boolean
+          dismissed: boolean
           created_at: string
         }
         Insert: {
@@ -227,6 +228,7 @@ export type Database = {
           notified_at?: string | null
           seen?: boolean
           bookmarked?: boolean
+          dismissed?: boolean
           created_at?: string
         }
         Update: {
@@ -242,6 +244,7 @@ export type Database = {
           notified_at?: string | null
           seen?: boolean
           bookmarked?: boolean
+          dismissed?: boolean
           created_at?: string
         }
         Relationships: []

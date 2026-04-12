@@ -28,6 +28,7 @@ export default function DemoFeedPage() {
             matchedCpv={match.matched_cpv}
             matchedKeywords={match.matched_keywords}
             bookmarked={match.bookmarked}
+            dismissed={false}
             matchId={match.id}
             aiReason={match.ai_reason}
           />
