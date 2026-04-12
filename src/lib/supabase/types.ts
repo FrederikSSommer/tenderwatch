@@ -74,6 +74,7 @@ export type Database = {
           id: string
           user_id: string
           name: string
+          description: string | null
           cpv_codes: string[]
           keywords: string[]
           exclude_keywords: string[]
@@ -91,6 +92,7 @@ export type Database = {
           id?: string
           user_id: string
           name?: string
+          description?: string | null
           cpv_codes?: string[]
           keywords?: string[]
           exclude_keywords?: string[]
@@ -108,6 +110,7 @@ export type Database = {
           id?: string
           user_id?: string
           name?: string
+          description?: string | null
           cpv_codes?: string[]
           keywords?: string[]
           exclude_keywords?: string[]

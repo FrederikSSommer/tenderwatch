@@ -430,6 +430,7 @@ export function OnboardingWizardV2({
       const { data: newProfile, error: profileErr } = await supabase.from('monitoring_profiles').insert({
         user_id: user.id,
         name: generatedProfile.profile_name || `${companyName} profile`,
+        description: description || null,
         cpv_codes: generatedProfile.cpv_codes,
         keywords: generatedProfile.keywords,
         exclude_keywords: generatedProfile.exclude_keywords,

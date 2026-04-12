@@ -110,6 +110,7 @@ interface RerankCandidate {
 interface ProfileSnapshot {
   id: string
   name: string | null
+  description: string | null
   keywords: string[]
   cpv_codes: string[]
   exclude_keywords: string[]
@@ -128,6 +129,7 @@ async function aiRerank(
 
   const profileSnapshot =
     `Name: ${profile.name || 'monitoring profile'}\n` +
+    (profile.description ? `Description: ${profile.description}\n` : '') +
     `Topic keywords: ${profile.keywords.slice(0, 12).join(', ') || '(none)'}\n` +
     `CPV codes (8-digit): ${profile.cpv_codes.slice(0, 12).join(', ') || '(none)'}\n` +
     `Excluded terms: ${profile.exclude_keywords.join(', ') || '(none)'}`
@@ -139,11 +141,16 @@ async function aiRerank(
 PROFILE
 ${profileSnapshot}
 
-Be STRICT and LITERAL. Match the actual product or service the profile would buy or sell, not just shared sectors. Examples of WRONG matches:
-- a shipbuilding profile with workwear, hand guns, or canteen catering tenders
-- a software/IT profile with office furniture or printer toner
-- a road construction profile with traffic-light bulbs
-A weak buyer/CPV overlap is NOT enough — the actual subject of the tender must align with the profile.
+Be STRICT and LITERAL. The question is: "Would this company realistically bid on this tender?"
+Only match tenders where the company's core services or products are what the tender is procuring.
+
+Examples of WRONG matches:
+- A naval architecture firm matched with marine equipment spare parts (they design ships, not sell parts)
+- A shipbuilding company matched with workwear, canteen catering, or cleaning services for a navy buyer
+- A software/IT company matched with office furniture or printer toner
+- A road construction company matched with traffic-light bulbs
+
+A shared sector keyword (e.g. "marine", "maritime") is NOT enough. The tender must procure what the company actually delivers.
 
 CANDIDATES (numbered)
 ${batch.map((c, i) => `[${i}] "${c.tender.title}"
@@ -385,6 +392,7 @@ export async function matchNewTenders(
       {
         id: profile.id,
         name: profile.name,
+        description: profile.description ?? null,
         keywords: profile.keywords || [],
         cpv_codes: profile.cpv_codes || [],
         exclude_keywords: profile.exclude_keywords || [],
