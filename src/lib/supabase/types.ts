@@ -42,6 +42,7 @@ export type Database = {
           plan: 'free' | 'starter' | 'professional' | 'team'
           status: 'active' | 'cancelled' | 'past_due' | 'trialing'
           current_period_end: string | null
+          email_frequency: 'daily' | 'weekly' | 'off'
           created_at: string
           updated_at: string
         }
@@ -53,6 +54,7 @@ export type Database = {
           plan?: 'free' | 'starter' | 'professional' | 'team'
           status?: 'active' | 'cancelled' | 'past_due' | 'trialing'
           current_period_end?: string | null
+          email_frequency?: 'daily' | 'weekly' | 'off'
           created_at?: string
           updated_at?: string
         }
@@ -64,6 +66,7 @@ export type Database = {
           plan?: 'free' | 'starter' | 'professional' | 'team'
           status?: 'active' | 'cancelled' | 'past_due' | 'trialing'
           current_period_end?: string | null
+          email_frequency?: 'daily' | 'weekly' | 'off'
           created_at?: string
           updated_at?: string
         }

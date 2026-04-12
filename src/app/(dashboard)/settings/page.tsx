@@ -18,6 +18,12 @@ export default async function SettingsPage() {
     .eq('user_id', user.id)
     .single()
 
+  const { count: profileCount } = await supabase
+    .from('monitoring_profiles')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', user.id)
+    .eq('active', true)
+
   return (
     <div className="p-6">
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Settings</h1>
@@ -25,6 +31,7 @@ export default async function SettingsPage() {
         email={user.email!}
         company={company}
         subscription={subscription}
+        profileCount={profileCount ?? 0}
       />
     </div>
   )

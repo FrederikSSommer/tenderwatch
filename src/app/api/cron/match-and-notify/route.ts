@@ -32,9 +32,23 @@ export async function GET(request: NextRequest) {
     }
 
     let emailsSent = 0
+    const today = new Date()
+    const isMonday = today.getUTCDay() === 1
+
     for (const [userId, userMatchList] of userMatches) {
       const { data: { user } } = await supabase.auth.admin.getUserById(userId)
       if (!user?.email) continue
+
+      // Check global email frequency setting
+      const { data: sub } = await supabase
+        .from('subscriptions')
+        .select('email_frequency')
+        .eq('user_id', userId)
+        .single()
+
+      const frequency = sub?.email_frequency ?? 'daily'
+      if (frequency === 'off') continue
+      if (frequency === 'weekly' && !isMonday) continue
 
       const { data: profiles } = await supabase
         .from('monitoring_profiles')
@@ -53,7 +67,37 @@ export async function GET(request: NextRequest) {
       //   .single()
       // if (!sub || sub.plan === 'free' || sub.status !== 'active') continue
 
-      const tenderIds = userMatchList.map(m => m.tender_id)
+      // For weekly digest, also include un-notified matches from the past week
+      let finalMatchList = userMatchList
+      if (frequency === 'weekly') {
+        const weekAgo = new Date()
+        weekAgo.setDate(weekAgo.getDate() - 7)
+        const { data: weekMatches } = await supabase
+          .from('matches')
+          .select('tender_id, relevance_score, matched_cpv, matched_keywords, ai_reason')
+          .eq('user_id', userId)
+          .eq('notified', false)
+          .eq('dismissed', false)
+          .gte('created_at', weekAgo.toISOString())
+        if (weekMatches) {
+          const existingIds = new Set(finalMatchList.map(m => m.tender_id))
+          for (const wm of weekMatches) {
+            if (!existingIds.has(wm.tender_id)) {
+              finalMatchList.push({
+                tender_id: wm.tender_id,
+                profile_id: '',
+                user_id: userId,
+                relevance_score: wm.relevance_score,
+                matched_cpv: wm.matched_cpv,
+                matched_keywords: wm.matched_keywords,
+                ai_reason: wm.ai_reason,
+              })
+            }
+          }
+        }
+      }
+
+      const tenderIds = finalMatchList.map(m => m.tender_id)
       const { data: tenders } = await supabase
         .from('tenders')
         .select('*')
@@ -61,7 +105,7 @@ export async function GET(request: NextRequest) {
 
       if (!tenders) continue
 
-      const digestTenders = userMatchList.map(m => {
+      const digestTenders = finalMatchList.map(m => {
         const tender = tenders.find(t => t.id === m.tender_id)!
         return {
           id: tender.id,
