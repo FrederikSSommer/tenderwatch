@@ -54,7 +54,11 @@ export function calculateRelevance(
   const tCpvNorm = tender.cpv_codes.map(normCpv)
   const pCpvNorm = profile.cpv_codes.map(normCpv)
 
+  // Skip overly broad CPV codes (e.g. 34000000, 71000000) — they match everything
+  const isBroadCpv = (c: string) => c.endsWith('000000') || c.endsWith('00000000')
+
   for (const tCpv of tCpvNorm) {
+    if (isBroadCpv(tCpv)) continue  // tender CPV too generic to be meaningful
     for (const pCpv of pCpvNorm) {
       if (tCpv === pCpv) {
         score += 40
@@ -67,11 +71,8 @@ export function calculateRelevance(
         // Division-level match (first 3 digits)
         score += 10
         matched_cpv.push(tCpv)
-      } else if (tCpv.substring(0, 2) === pCpv.substring(0, 2)) {
-        // Division-level match (first 2 digits — broadest category)
-        score += 5
-        matched_cpv.push(tCpv)
       }
+      // Removed 2-digit match — too broad, causes noise
     }
   }
   // Cap CPV score at 40

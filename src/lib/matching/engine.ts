@@ -395,7 +395,9 @@ export async function matchNewTenders(
     for (const c of topN) {
       const ai = aiScores.get(c.tender_id)
       if (ai === undefined) continue
-      const blended = Math.min(100, Math.round(ai.score * 6 + c.stage1_score * 0.4))
+      // 80% AI (0-10 scale × 8) + 20% Stage-1 (0-100 scale × 0.2)
+      // Claude's judgment dominates — Stage 1 is just a tiebreaker
+      const blended = Math.min(100, Math.round(ai.score * 8 + c.stage1_score * 0.2))
       matches.push({
         tender_id: c.tender_id,
         profile_id: c.profile_id,
@@ -403,7 +405,7 @@ export async function matchNewTenders(
         relevance_score: blended,
         matched_cpv: c.matched_cpv,
         matched_keywords: c.matched_keywords,
-        ai_reason: ai.why,
+        ai_reason: ai.why || `Matched on ${c.matched_cpv.length > 0 ? 'CPV ' + c.matched_cpv.slice(0, 2).join(', ') : ''}${c.matched_cpv.length > 0 && c.matched_keywords.length > 0 ? ' + ' : ''}${c.matched_keywords.length > 0 ? 'keywords: ' + c.matched_keywords.slice(0, 3).join(', ') : ''}`.trim() || null,
       })
     }
   }
