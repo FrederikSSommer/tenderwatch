@@ -4,8 +4,10 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { formatDeadline } from '@/lib/utils/date'
 import { formatEUR } from '@/lib/utils/currency'
-import { Sparkles } from 'lucide-react'
+import { Sparkles, Bookmark } from 'lucide-react'
 import { clsx } from 'clsx'
+import { createClient } from '@/lib/supabase/client'
+import { useState } from 'react'
 
 interface TenderCardProps {
   tender: {
@@ -22,6 +24,7 @@ interface TenderCardProps {
   matchedKeywords: string[]
   bookmarked: boolean
   matchId: string
+  aiReason?: string | null
 }
 
 function getScoreColor(score: number) {
@@ -43,9 +46,22 @@ export function TenderCard({
   matchedKeywords,
   bookmarked,
   matchId,
+  aiReason,
 }: TenderCardProps) {
   const pathname = usePathname()
   const prefix = pathname.startsWith('/demo') ? '/demo' : ''
+  const [followed, setFollowed] = useState(bookmarked)
+  const supabase = createClient()
+
+  async function toggleFollow() {
+    if (!matchId) return
+    const newState = !followed
+    setFollowed(newState)
+    await supabase
+      .from('matches')
+      .update({ bookmarked: newState })
+      .eq('id', matchId)
+  }
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 hover:border-gray-300 transition-colors">
@@ -88,9 +104,28 @@ export function TenderCard({
               ))}
             </div>
           )}
+
+          {aiReason && (
+            <p className="mt-1.5 text-xs text-blue-600 italic flex items-center gap-1">
+              <Sparkles className="h-3 w-3 flex-shrink-0" />
+              {aiReason}
+            </p>
+          )}
         </div>
 
         <div className="flex flex-col items-center gap-2">
+          <button
+            onClick={toggleFollow}
+            className={clsx(
+              'rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors flex items-center gap-1',
+              followed
+                ? 'border-yellow-300 bg-yellow-50 text-yellow-700'
+                : 'border-gray-200 text-gray-700 hover:bg-gray-50'
+            )}
+          >
+            <Bookmark className={clsx('h-3 w-3', followed && 'fill-current')} />
+            {followed ? 'Followed' : 'Follow'}
+          </button>
           <Link
             href={`${prefix}/tender/${tender.id}`}
             className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"

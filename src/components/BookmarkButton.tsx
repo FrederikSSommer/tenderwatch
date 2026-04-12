@@ -37,7 +37,7 @@ export function BookmarkButton({
       )}
     >
       <Bookmark className={clsx('h-4 w-4', bookmarked && 'fill-current')} />
-      {bookmarked ? 'Subscribed' : 'Subscribe'}
+      {bookmarked ? 'Followed' : 'Follow'}
     </button>
   )
 }

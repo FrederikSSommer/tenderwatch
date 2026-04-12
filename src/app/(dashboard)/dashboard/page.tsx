@@ -236,7 +236,7 @@ export default async function DashboardPage() {
             ) : (
               <div className="px-5 py-6 text-center">
                 <p className="text-sm text-gray-500">No upcoming deadlines</p>
-                <p className="text-xs text-gray-400 mt-1">Subscribe to tenders to track their deadlines here.</p>
+                <p className="text-xs text-gray-400 mt-1">Follow tenders to track their deadlines here.</p>
               </div>
             )}
           </div>

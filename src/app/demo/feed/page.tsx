@@ -29,6 +29,7 @@ export default function DemoFeedPage() {
             matchedKeywords={match.matched_keywords}
             bookmarked={match.bookmarked}
             matchId={match.id}
+            aiReason={match.ai_reason}
           />
         ))}
       </div>

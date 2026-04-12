@@ -99,7 +99,7 @@ export default async function DemoTenderPage({
           }`}
         >
           <Bookmark className={`h-4 w-4 ${match?.bookmarked ? 'fill-current' : ''}`} />
-          {match?.bookmarked ? 'Subscribed' : 'Subscribe'}
+          {match?.bookmarked ? 'Followed' : 'Follow'}
         </button>
       </div>
 

@@ -204,6 +204,7 @@ export type Database = {
           relevance_score: number
           matched_cpv: string[]
           matched_keywords: string[]
+          ai_reason: string | null
           notified: boolean
           notified_at: string | null
           seen: boolean
@@ -218,6 +219,7 @@ export type Database = {
           relevance_score: number
           matched_cpv?: string[]
           matched_keywords?: string[]
+          ai_reason?: string | null
           notified?: boolean
           notified_at?: string | null
           seen?: boolean
@@ -232,6 +234,7 @@ export type Database = {
           relevance_score?: number
           matched_cpv?: string[]
           matched_keywords?: string[]
+          ai_reason?: string | null
           notified?: boolean
           notified_at?: string | null
           seen?: boolean

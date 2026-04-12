@@ -60,6 +60,7 @@ export default async function FeedPage({
               matchedKeywords={match.matched_keywords}
               bookmarked={match.bookmarked}
               matchId={match.id}
+              aiReason={match.ai_reason}
             />
           ))
         ) : (

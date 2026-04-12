@@ -15,6 +15,7 @@ export interface MatchResult {
   relevance_score: number
   matched_cpv: string[]
   matched_keywords: string[]
+  ai_reason: string | null
 }
 
 // Stage-1 (cheap) keyword/CPV threshold. The Stage-2 Claude rerank is the
@@ -114,13 +115,15 @@ interface ProfileSnapshot {
   exclude_keywords: string[]
 }
 
+interface AiResult { score: number; why: string | null }
+
 // Stage-2: Claude rerank — strict literal-match prompt mirroring the wizard.
-// Returns AI scores by candidate index.
+// Returns AI scores + reason by tender_id.
 async function aiRerank(
   profile: ProfileSnapshot,
   candidates: RerankCandidate[]
-): Promise<Map<string, number>> {
-  const out = new Map<string, number>()
+): Promise<Map<string, AiResult>> {
+  const out = new Map<string, AiResult>()
   if (candidates.length === 0) return out
 
   const profileSnapshot =
@@ -149,12 +152,12 @@ ${batch.map((c, i) => `[${i}] "${c.tender.title}"
    ${c.tender.description ? c.tender.description.slice(0, 220) : ''}`).join('\n\n')}
 
 Return ONLY a JSON array. Include ONLY entries scoring 5 or higher (0-10 scale). Format:
-[{"i": 0, "score": 9}, {"i": 3, "score": 7}, ...]`
+[{"i": 0, "score": 9, "why": "short reason"}, {"i": 3, "score": 7, "why": "short reason"}, ...]`
 
     try {
       const msg = await getAnthropicClient().messages.create({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 1500,
+        max_tokens: 2000,
         messages: [
           { role: 'user', content: prompt },
           { role: 'assistant', content: '[' },
@@ -163,16 +166,16 @@ Return ONLY a JSON array. Include ONLY entries scoring 5 or higher (0-10 scale).
       const text = msg.content[0].type === 'text' ? '[' + msg.content[0].text : '[]'
       const m = text.match(/\[[\s\S]*?\]/)
       if (!m) continue
-      const scored: { i: number; score: number }[] = JSON.parse(m[0])
+      const scored: { i: number; score: number; why?: string }[] = JSON.parse(m[0])
       for (const s of scored) {
         if (typeof s.i !== 'number' || s.score < 5) continue
         if (s.i < 0 || s.i >= batch.length) continue
-        out.set(batch[s.i].tender_id, s.score)
+        out.set(batch[s.i].tender_id, { score: s.score, why: s.why || null })
       }
     } catch (err) {
       console.error('AI rerank batch failed:', err)
       // On failure, accept the Stage-1 candidates as-is for this batch
-      for (const c of batch) out.set(c.tender_id, 6)
+      for (const c of batch) out.set(c.tender_id, { score: 6, why: null })
     }
   }
   return out
@@ -388,7 +391,7 @@ export async function matchNewTenders(
     for (const c of topN) {
       const ai = aiScores.get(c.tender_id)
       if (ai === undefined) continue
-      const blended = Math.min(100, Math.round(ai * 6 + c.stage1_score * 0.4))
+      const blended = Math.min(100, Math.round(ai.score * 6 + c.stage1_score * 0.4))
       matches.push({
         tender_id: c.tender_id,
         profile_id: c.profile_id,
@@ -396,6 +399,7 @@ export async function matchNewTenders(
         relevance_score: blended,
         matched_cpv: c.matched_cpv,
         matched_keywords: c.matched_keywords,
+        ai_reason: ai.why,
       })
     }
   }
@@ -409,6 +413,7 @@ export async function matchNewTenders(
         relevance_score: m.relevance_score,
         matched_cpv: m.matched_cpv,
         matched_keywords: m.matched_keywords,
+        ai_reason: m.ai_reason,
       })),
       { onConflict: 'tender_id,profile_id' }
     )

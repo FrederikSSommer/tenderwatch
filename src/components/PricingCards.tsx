@@ -24,7 +24,7 @@ const plans = [
       'Daily email digest',
       '30 AI summaries/month',
       'Dashboard with tender feed',
-      'Subscribe to tenders',
+      'Follow tenders',
     ],
     cta: 'Start 14-day trial',
     href: '/signup?plan=starter',
