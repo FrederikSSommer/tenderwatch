@@ -241,7 +241,7 @@ export async function sendDailyDigest(params: DigestParams) {
   const text = buildPlainText(params)
 
   const { error } = await getResend().emails.send({
-    from: 'TenderWatch <alerts@tenderwatch.dk>',
+    from: 'TenderWatch <onboarding@resend.dev>',
     to: params.to,
     subject: `TenderWatch: ${params.tenders.length} new tender${params.tenders.length !== 1 ? 's' : ''} match your profile`,
     html,
