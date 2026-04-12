@@ -252,7 +252,8 @@ export async function matchNewTenders(
     return []
   }
 
-  // Cache: skip (profile, tender) pairs already evaluated
+  // Cache: skip (profile, tender) pairs that already have a complete match
+  // (i.e. have an ai_reason). Matches missing ai_reason get re-evaluated.
   // Batch the query to avoid hitting PostgREST URL length limits with 3000+ IDs
   const profileIds = profiles.map(p => p.id)
   const tenderIds = tenders.map(t => t.id)
@@ -262,12 +263,15 @@ export async function matchNewTenders(
     const batch = tenderIds.slice(i, i + CACHE_BATCH)
     const { data: existing } = await supabase
       .from('matches')
-      .select('profile_id, tender_id')
+      .select('profile_id, tender_id, ai_reason')
       .in('profile_id', profileIds)
       .in('tender_id', batch)
-    for (const r of existing || []) seen.add(`${r.profile_id}::${r.tender_id}`)
+    for (const r of existing || []) {
+      // Only skip if ai_reason is already populated
+      if (r.ai_reason) seen.add(`${r.profile_id}::${r.tender_id}`)
+    }
   }
-  console.log(`[matching] Cache: ${seen.size} existing pairs will be skipped`)
+  console.log(`[matching] Cache: ${seen.size} complete pairs will be skipped`)
 
   const userIds = [...new Set(profiles.map(p => p.user_id))]
   const learnedByUser = await fetchLearnedSignalsByUser(supabase, userIds)
