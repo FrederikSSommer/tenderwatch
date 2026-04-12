@@ -4,12 +4,13 @@ import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { KeywordInput } from './KeywordInput'
-import { Loader2, Save, Trash2 } from 'lucide-react'
+import { Loader2, Save, Trash2, Sparkles } from 'lucide-react'
 
 interface ProfileEditorProps {
   profile?: {
     id: string
     name: string
+    description: string | null
     cpv_codes: string[]
     keywords: string[]
     exclude_keywords: string[]
@@ -52,6 +53,7 @@ export function ProfileEditor({ profile }: ProfileEditorProps) {
   const supabase = createClient()
   const [loading, setLoading] = useState(false)
   const [name, setName] = useState(profile?.name ?? 'My profile')
+  const [description, setDescription] = useState(profile?.description ?? '')
   const [cpvCodes, setCpvCodes] = useState<string[]>(profile?.cpv_codes ?? [])
   const [keywords, setKeywords] = useState<string[]>(profile?.keywords ?? [])
   const [excludeKeywords, setExcludeKeywords] = useState<string[]>(profile?.exclude_keywords ?? [])
@@ -65,6 +67,7 @@ export function ProfileEditor({ profile }: ProfileEditorProps) {
     setLoading(true)
     const data = {
       name,
+      description: description || null,
       cpv_codes: cpvCodes,
       keywords,
       exclude_keywords: excludeKeywords,
@@ -110,6 +113,26 @@ export function ProfileEditor({ profile }: ProfileEditorProps) {
           onChange={(e) => setName(e.target.value)}
           className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700">
+          Company / profile description
+          <span className="ml-1.5 inline-flex items-center gap-1 text-xs font-normal text-blue-600">
+            <Sparkles className="h-3 w-3" />
+            Used by AI to judge tender relevance
+          </span>
+        </label>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          rows={3}
+          placeholder="e.g. Naval architecture and EPC shipbuilding. We design and build vessels — patrol boats, ferries, offshore support vessels. We do not supply equipment or spare parts."
+          className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm"
+        />
+        <p className="mt-1 text-xs text-gray-500">
+          Be specific about what your company does and doesn&apos;t do. This is the most important field for matching quality.
+        </p>
       </div>
 
       <div>
