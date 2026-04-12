@@ -12,7 +12,6 @@ import {
   Target,
   LogOut,
   Zap,
-  Building2,
   Rss,
 } from 'lucide-react'
 import { clsx } from 'clsx'
@@ -21,7 +20,6 @@ const baseNavigation = [
   { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
   { name: 'Tender Feed', path: '/feed', icon: Rss },
   { name: 'Profiles', path: '/profiles', icon: Target },
-  { name: 'Buyers', path: '/buyers', icon: Building2 },
   { name: 'Followed', path: '/bookmarks', icon: Bookmark },
   { name: 'Calendar', path: '/calendar', icon: Calendar },
 ]

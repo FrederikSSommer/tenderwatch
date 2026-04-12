@@ -252,33 +252,6 @@ export type Database = {
         }
         Relationships: []
       }
-      followed_buyers: {
-        Row: {
-          id: string
-          user_id: string
-          buyer_name: string
-          buyer_country: string | null
-          ted_search_term: string | null
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          user_id?: string
-          buyer_name: string
-          buyer_country?: string | null
-          ted_search_term?: string | null
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          user_id?: string
-          buyer_name?: string
-          buyer_country?: string | null
-          ted_search_term?: string | null
-          created_at?: string
-        }
-        Relationships: []
-      }
       notifications: {
         Row: {
           id: string

@@ -2,7 +2,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import {
   Target, Bell, Calendar, TrendingUp, ArrowRight,
-  Building2, Clock, Zap, BarChart3,
+  Clock, Zap, BarChart3,
 } from 'lucide-react'
 
 export default async function DashboardPage() {
@@ -11,7 +11,7 @@ export default async function DashboardPage() {
   if (!user) return null
 
   // Fetch all data in parallel
-  const [profilesRes, matchesRes, recentMatchesRes, deadlinesRes, followedBuyersRes] = await Promise.all([
+  const [profilesRes, matchesRes, recentMatchesRes, deadlinesRes] = await Promise.all([
     supabase
       .from('monitoring_profiles')
       .select('id, name, cpv_codes, keywords, countries, active')
@@ -43,19 +43,12 @@ export default async function DashboardPage() {
       .order('created_at', { ascending: false })
       .limit(20),
 
-    // Followed buyers count
-    supabase
-      .from('followed_buyers')
-      .select('id')
-      .eq('user_id', user.id),
   ])
 
   const profiles = profilesRes.data || []
   const todayMatches = matchesRes.data || []
   const recentMatches = recentMatchesRes.data || []
   const allBookmarked = deadlinesRes.data || []
-  const followedBuyers = followedBuyersRes.data || []
-
   // Compute stats
   const highRelevance = todayMatches.filter(m => m.relevance_score >= 80).length
   const medRelevance = todayMatches.filter(m => m.relevance_score >= 40 && m.relevance_score < 80).length
@@ -90,12 +83,6 @@ export default async function DashboardPage() {
           value={activeProfiles}
           detail={`${profiles.length} total`}
           href="/profiles"
-        />
-        <StatCard
-          icon={<Building2 className="h-5 w-5 text-green-600" />}
-          label="Followed buyers"
-          value={followedBuyers.length}
-          href="/buyers"
         />
         <StatCard
           icon={<Calendar className="h-5 w-5 text-amber-600" />}
