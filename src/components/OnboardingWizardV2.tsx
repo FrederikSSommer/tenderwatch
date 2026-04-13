@@ -55,6 +55,26 @@ const COUNTRIES = [
   { code: 'ES', name: 'Spain', flag: '🇪🇸' },
   { code: 'IT', name: 'Italy', flag: '🇮🇹' },
   { code: 'BE', name: 'Belgium', flag: '🇧🇪' },
+  { code: 'AT', name: 'Austria', flag: '🇦🇹' },
+  { code: 'PT', name: 'Portugal', flag: '🇵🇹' },
+  { code: 'IE', name: 'Ireland', flag: '🇮🇪' },
+  { code: 'CZ', name: 'Czech Republic', flag: '🇨🇿' },
+  { code: 'RO', name: 'Romania', flag: '🇷🇴' },
+  { code: 'BG', name: 'Bulgaria', flag: '🇧🇬' },
+  { code: 'HR', name: 'Croatia', flag: '🇭🇷' },
+  { code: 'LT', name: 'Lithuania', flag: '🇱🇹' },
+  { code: 'LV', name: 'Latvia', flag: '🇱🇻' },
+  { code: 'EE', name: 'Estonia', flag: '🇪🇪' },
+  { code: 'SK', name: 'Slovakia', flag: '🇸🇰' },
+  { code: 'SI', name: 'Slovenia', flag: '🇸🇮' },
+  { code: 'LU', name: 'Luxembourg', flag: '🇱🇺' },
+  { code: 'MT', name: 'Malta', flag: '🇲🇹' },
+  { code: 'CY', name: 'Cyprus', flag: '🇨🇾' },
+  { code: 'GR', name: 'Greece', flag: '🇬🇷' },
+  { code: 'HU', name: 'Hungary', flag: '🇭🇺' },
+  { code: 'IS', name: 'Iceland', flag: '🇮🇸' },
+  { code: 'CH', name: 'Switzerland', flag: '🇨🇭' },
+  { code: 'LI', name: 'Liechtenstein', flag: '🇱🇮' },
 ]
 
 const VALUE_RANGES = [
@@ -540,17 +560,15 @@ export function OnboardingWizardV2({
             {!isAdditionalProfile && (
               <div>
                 <label className="block text-sm font-medium text-gray-700">Country</label>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {COUNTRIES.slice(0, 8).map(c => (
-                    <ChoiceChip
-                      key={c.code}
-                      label={c.name}
-                      emoji={c.flag}
-                      selected={country === c.code}
-                      onClick={() => setCountry(c.code)}
-                    />
+                <select
+                  value={country}
+                  onChange={(e) => setCountry(e.target.value)}
+                  className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  {COUNTRIES.map(c => (
+                    <option key={c.code} value={c.code}>{c.flag} {c.name}</option>
                   ))}
-                </div>
+                </select>
               </div>
             )}
             <div>

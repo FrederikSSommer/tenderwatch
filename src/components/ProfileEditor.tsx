@@ -25,15 +25,16 @@ interface ProfileEditorProps {
 
 const EU_COUNTRIES = [
   { code: 'DK', name: 'Denmark' },
-  { code: 'SE', name: 'Sweden' },
   { code: 'NO', name: 'Norway' },
+  { code: 'SE', name: 'Sweden' },
   { code: 'DE', name: 'Germany' },
   { code: 'NL', name: 'Netherlands' },
   { code: 'FI', name: 'Finland' },
   { code: 'FR', name: 'France' },
+  { code: 'UK', name: 'United Kingdom' },
+  { code: 'PL', name: 'Poland' },
   { code: 'ES', name: 'Spain' },
   { code: 'IT', name: 'Italy' },
-  { code: 'PL', name: 'Poland' },
   { code: 'BE', name: 'Belgium' },
   { code: 'AT', name: 'Austria' },
   { code: 'PT', name: 'Portugal' },
@@ -45,6 +46,16 @@ const EU_COUNTRIES = [
   { code: 'LT', name: 'Lithuania' },
   { code: 'LV', name: 'Latvia' },
   { code: 'EE', name: 'Estonia' },
+  { code: 'SK', name: 'Slovakia' },
+  { code: 'SI', name: 'Slovenia' },
+  { code: 'LU', name: 'Luxembourg' },
+  { code: 'MT', name: 'Malta' },
+  { code: 'CY', name: 'Cyprus' },
+  { code: 'GR', name: 'Greece' },
+  { code: 'HU', name: 'Hungary' },
+  { code: 'IS', name: 'Iceland' },
+  { code: 'CH', name: 'Switzerland' },
+  { code: 'LI', name: 'Liechtenstein' },
 ]
 
 export function ProfileEditor({ profile }: ProfileEditorProps) {
