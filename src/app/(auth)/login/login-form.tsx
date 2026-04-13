@@ -8,6 +8,8 @@ export function LoginForm() {
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [sent, setSent] = useState(false)
+  const [otp, setOtp] = useState('')
+  const [otpLoading, setOtpLoading] = useState(false)
   const [error, setError] = useState('')
   const supabase = createClient()
 
@@ -31,6 +33,25 @@ export function LoginForm() {
     setLoading(false)
   }
 
+  async function handleOtpVerify(e: React.FormEvent) {
+    e.preventDefault()
+    setOtpLoading(true)
+    setError('')
+
+    const { error } = await supabase.auth.verifyOtp({
+      email,
+      token: otp,
+      type: 'email',
+    })
+
+    if (error) {
+      setError(error.message)
+      setOtpLoading(false)
+    } else {
+      window.location.href = '/auth/post-login'
+    }
+  }
+
   async function handleGoogleLogin() {
     await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -42,10 +63,50 @@ export function LoginForm() {
 
   if (sent) {
     return (
-      <div className="text-center py-8">
-        <Mail className="mx-auto h-12 w-12 text-blue-600" />
-        <h2 className="mt-4 text-lg font-semibold">Check your email</h2>
-        <p className="mt-2 text-gray-600">We sent a login link to <strong>{email}</strong></p>
+      <div className="py-8">
+        <div className="text-center">
+          <Mail className="mx-auto h-12 w-12 text-blue-600" />
+          <h2 className="mt-4 text-lg font-semibold">Check your email</h2>
+          <p className="mt-2 text-gray-600">
+            We sent a 6-digit code to <strong>{email}</strong>.
+            Enter it below or click the link in the email — on this device.
+          </p>
+        </div>
+        <form onSubmit={handleOtpVerify} className="mt-6 space-y-4">
+          <div>
+            <label htmlFor="otp" className="block text-sm font-medium text-gray-700">
+              6-digit code
+            </label>
+            <input
+              id="otp"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              required
+              value={otp}
+              onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+              className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-center text-2xl tracking-widest shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="000000"
+            />
+          </div>
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <button
+            type="submit"
+            disabled={otpLoading || otp.length !== 6}
+            className="w-full flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+          >
+            {otpLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Verify code
+          </button>
+          <button
+            type="button"
+            onClick={() => { setSent(false); setOtp(''); setError('') }}
+            className="w-full text-sm text-gray-500 hover:text-gray-700"
+          >
+            Use a different email
+          </button>
+        </form>
       </div>
     )
   }
