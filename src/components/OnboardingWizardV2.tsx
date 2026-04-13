@@ -586,7 +586,22 @@ export function OnboardingWizardV2({
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700">Which countries should I search in?</label>
+              <div className="flex items-center justify-between">
+                <label className="block text-sm font-medium text-gray-700">Which countries should I search in?</label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedCountries.size === COUNTRIES.length) {
+                      setSelectedCountries(new Set())
+                    } else {
+                      setSelectedCountries(new Set(COUNTRIES.map(c => c.code)))
+                    }
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  {selectedCountries.size === COUNTRIES.length ? 'Deselect all' : 'Select all'}
+                </button>
+              </div>
               <div className="flex flex-wrap gap-2 mt-2">
                 {COUNTRIES.map(c => (
                   <ChoiceChip

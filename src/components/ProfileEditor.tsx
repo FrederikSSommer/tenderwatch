@@ -174,7 +174,22 @@ export function ProfileEditor({ profile }: ProfileEditorProps) {
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">Countries</label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-sm font-medium text-gray-700">Countries</label>
+          <button
+            type="button"
+            onClick={() => {
+              if (countries.length === EU_COUNTRIES.length) {
+                setCountries([])
+              } else {
+                setCountries(EU_COUNTRIES.map(c => c.code))
+              }
+            }}
+            className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+          >
+            {countries.length === EU_COUNTRIES.length ? 'Deselect all' : 'Select all'}
+          </button>
+        </div>
         <div className="grid grid-cols-3 gap-2">
           {EU_COUNTRIES.map((c) => (
             <label key={c.code} className="flex items-center gap-2 text-sm">
