@@ -48,7 +48,6 @@ TED is comprehensive but painful to use: raw search UX, no persistent filters, n
 /profiles                   → Monitoring profiles management        BUILT
 /profiles/new               → AI-powered profile wizard             BUILT
 /tender/[id]                → Tender detail + AI summary            BUILT
-/buyers                     → Followed contracting authorities      BUILT
 /bookmarks                  → Followed tenders                      BUILT
 /calendar                   → Deadline calendar                     BUILT
 /settings                   → User preferences                      BUILT
@@ -98,6 +97,13 @@ NOT YET BUILT:
 - Export to PDF
 - Add to pipeline action
 
+### 4.3b Dismiss & Learn — BUILT
+- Dismiss button on feed cards (X icon) with undo
+- Dismissed tenders collapse to one-line view
+- Dismissed tender titles fed to Claude as negative examples during matching
+- Followed tender titles fed as positive examples
+- Profile description passed to Claude for company context
+
 ### 4.4 Monitoring Profiles (replaces "Search Agents") — BUILT
 - AI-powered wizard for profile creation (company description, sectors, buyers, countries)
 - Auto-generates CPV codes, keywords, exclude keywords
@@ -116,18 +122,18 @@ NOT YET BUILT:
 - Learned signals from followed tenders (CPV + keyword patterns)
 
 **Not built:**
-- Alert frequency setting (instant/daily/weekly)
-- Agent-style per-profile notification controls
+- Per-profile notification toggle (notify_email on/off exists but global frequency in Settings takes precedence)
 
-### 4.5 Email Alerts — PARTIAL
-**Built:**
+### 4.5 Email Alerts — BUILT
 - Daily cron: ingest-ted → match-and-notify pipeline
 - Notification system (notified flag, notified_at timestamp)
+- HTML email digest via Resend with score badges, AI one-liners, grouped by relevance tier
+- Configurable frequency: daily / weekly / off (in Settings)
+- Weekly digest aggregates un-notified matches from past 7 days (sends Mondays)
 
 **Not built:**
-- Resend email templates with tender cards
-- Configurable frequency (instant/daily/weekly digest)
 - One-click unsubscribe per profile
+- Instant alerts
 
 ### 4.6 Mobile Push Notifications — NOT STARTED
 - PWA Web Push via VAPID
@@ -140,21 +146,22 @@ NOT YET BUILT:
 - Bid detail workspace (linked tender, notes, files, activity log)
 - Go/No-Go decision log
 
-### 4.8 Followed Buyers — BUILT
-- Search and follow contracting authorities
-- Buyer list page
-- TED search terms per buyer
+### 4.8 Followed Buyers — REMOVED
+Removed in favour of profile-based matching. Buyer context is captured during onboarding wizard (buyer suggestion step feeds into profile generation).
 
-**Not built:**
-- Buyer profile page (recent notices, award history)
-- Alert on new notices from followed buyer
-- Dashboard widget for buyer activity
+### 4.9 Organisations & Team Collaboration — NOT STARTED
+**Planned:**
+- `organisations` table with `organisation_members` (owner/admin/member roles)
+- Shared monitoring profiles via `organisation_id` on `monitoring_profiles`
+- Each user subscribes to specific org profiles for their feed
+- Dismiss/follow actions stay per-user
+- Email settings stay per-user
+- Org-level billing
 
-### 4.9 Team Collaboration — NOT STARTED
-- Workspace model with roles (Admin, Member, Viewer)
-- Shared agents, pipeline, followed buyers
-- Invite by email
-- Row-level security per workspace
+**Open product decisions:**
+- Who can create profiles — any member or only admins?
+- Org-wide vs per-user dismiss/follow?
+- Billing: org pays or individual members?
 
 ### 4.10 Backfill & Ingestion — BUILT
 - Manual backfill (1–90 days, triggered from UI)
@@ -203,10 +210,15 @@ tenders               (id, source, external_id, title, description, buyer_name,
                         ai_summary, ai_summary_generated_at, raw_data, created_at)
 matches               (id, tender_id, profile_id, user_id, relevance_score,
                         matched_cpv[], matched_keywords[], ai_reason,
-                        notified, notified_at, seen, bookmarked, created_at)
-followed_buyers       (id, user_id, buyer_name, buyer_country, ted_search_term, created_at)
+                        notified, notified_at, seen, bookmarked, dismissed, created_at)
+subscriptions         (id, user_id, plan, status, email_frequency,
+                        stripe_customer_id, stripe_subscription_id, created_at)
+companies             (id, user_id, name, country_code, created_at)
+notifications         (id, user_id, channel, tender_count, created_at)
 
 -- NOT YET BUILT
+organisations         (id, name, created_by, created_at)
+organisation_members  (id, org_id, user_id, role, created_at)
 workspaces            (id, name, plan, stripe_customer_id)
 pipeline_bids         (id, workspace_id, tender_id, stage, owner_id, value_estimate, ...)
 bid_comments          (id, bid_id, user_id, body, created_at)
@@ -218,7 +230,7 @@ push_subscriptions    (id, user_id, endpoint, keys_json)
 
 ## 7. Design Direction
 
-**Current state:** Light theme with clean card-based layout. Functional but not yet matching the spec's "dark-first intelligence tool" aesthetic.
+**Current state:** Light/dark theme with automatic system preference detection. Clean card-based layout. Dark mode implemented via CSS overrides in `globals.css`.
 
 **Spec target:**
 - Background: deep navy `#0A0F1E`
@@ -257,7 +269,7 @@ push_subscriptions    (id, user_id, endpoint, keys_json)
 - Pricing page: BUILT
 - Freemium gates: NOT ENFORCED
 - Push notifications: NOT STARTED
-- Dark theme: NOT STARTED
+- Dark theme: BUILT (auto via system preference)
 - Landing page: BUILT
 - Mobile refinement: NOT STARTED
 
@@ -267,19 +279,18 @@ push_subscriptions    (id, user_id, endpoint, keys_json)
 
 ### High Impact — Revenue Enablers
 1. **Enforce freemium gates** — limit profiles, AI summaries, and history by plan tier
-2. **Email alerts via Resend** — daily digest with tender cards and deeplinks (key retention driver)
-3. **Tender Discovery page** — full-text TED search independent of profiles (core value prop)
+2. **Tender Discovery page** — full-text TED search independent of profiles (core value prop)
+3. **Additional tender sources** — MitUdbud.dk (Danish sub-EU tenders), Doffin (Norway), etc.
 
 ### Medium Impact — Product Completeness
-4. **Bid Pipeline** — kanban + list view, basic bid workspace (Phase 3 core)
-5. **Buyer profiles** — show recent notices and award history for followed buyers
-6. **Alert frequency controls** — instant/daily/weekly per profile
+4. **Organisations** — shared profiles, team feed, org billing (see 4.9)
+5. **Bid Pipeline** — kanban + list view, basic bid workspace (Phase 3 core)
+6. **Onboarding polish** — pending profile restore after signup (BUILT), profile editing in review step
 
 ### Lower Priority — Polish
-7. **Dark theme** — match spec design direction
-8. **Push notifications** — PWA Web Push
-9. **Team/workspace features** — multi-user collaboration
-10. **Mobile UX refinement** — responsive optimizations
+7. **Push notifications** — PWA Web Push
+8. **Mobile UX refinement** — responsive optimizations
+9. **News/press monitoring** — AI-extracted tender signals from unstructured sources
 
 ---
 
