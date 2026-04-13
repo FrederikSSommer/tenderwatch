@@ -30,8 +30,9 @@ export default async function DashboardPage() {
       .from('matches')
       .select('id, relevance_score, matched_keywords, created_at, tender:tenders(id, title, buyer_name, buyer_country, submission_deadline, estimated_value_eur)')
       .eq('user_id', user.id)
-      .gte('relevance_score', 40)
-      .order('created_at', { ascending: false })
+      .eq('dismissed', false)
+      .gte('relevance_score', 60)
+      .order('relevance_score', { ascending: false })
       .limit(5),
 
     // Upcoming deadlines
