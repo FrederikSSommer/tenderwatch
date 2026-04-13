@@ -56,8 +56,18 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  // Stage 1: broad TED ingestion into the shared tenders table
-  const ingest = await ingestRecentTenders(serviceClient, since, { maxPages: 30 })
+  // Stage 1: check if we already have tenders for this period before hitting TED
+  const sinceStr = since.toISOString().split('T')[0]
+  const { count } = await serviceClient
+    .from('tenders')
+    .select('id', { count: 'exact', head: true })
+    .gte('publication_date', sinceStr)
+
+  let ingest = { ingested: 0, pages: 0, errors: [] as string[] }
+  if ((count ?? 0) < 50) {
+    // Not enough tenders locally — fetch from TED
+    ingest = await ingestRecentTenders(serviceClient, since, { maxPages: 30 })
+  }
 
   // Stage 2: score this user's profiles against the shared pool
   // (uses Stage-1 keyword/CPV filter + Stage-2 Claude rerank, with cache)
