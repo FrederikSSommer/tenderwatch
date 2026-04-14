@@ -1,0 +1,39 @@
+# Supabase project configuration for TenderWatch.
+#
+# Push to the linked Supabase project with:
+#   supabase link --project-ref <your-project-ref>
+#   supabase config push
+#
+# The email templates below must include `{{ .Token }}` so the 6-digit OTP
+# code actually appears in the auth email — the login/signup UI asks users
+# to paste this code, so the default Supabase templates (which only contain
+# `{{ .ConfirmationURL }}`) leave users stuck with no code to enter.
+
+project_id = "tenderwatch"
+
+[auth]
+enabled = true
+# Keep sign-ups on — `signInWithOtp` auto-creates users on first login.
+enable_signup = true
+# We send the token via the email template, so users can verify via OTP or link.
+enable_confirmations = true
+
+[auth.email]
+enable_signup = true
+# Auto-confirm via OTP / magic link click — not via a separate confirmation.
+double_confirm_changes = true
+enable_confirmations = true
+# OTP length must match the 6-digit input in login-form.tsx / signup-form.tsx.
+otp_length = 6
+# Keep the code valid long enough that users can switch apps to check email.
+otp_expiry = 3600
+
+# Magic link email (used by `signInWithOtp` for existing users).
+[auth.email.template.magic_link]
+subject = "Your TenderWatch login code"
+content_path = "./supabase/templates/magic_link.html"
+
+# Signup confirmation email (used by `signInWithOtp` for new users).
+[auth.email.template.confirmation]
+subject = "Confirm your TenderWatch account"
+content_path = "./supabase/templates/confirmation.html"
