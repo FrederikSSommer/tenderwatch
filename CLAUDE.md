@@ -89,4 +89,12 @@ Run in Supabase SQL Editor. Files in `supabase/migrations/`:
 4. `004_matches_dismissed.sql`
 5. `005_email_frequency.sql`
 
+## Git workflow
+
+Work directly on `main`. If the harness assigns a task-specific branch,
+still land the final commit on `main` at the end of the task:
+fast-forward / merge the feature branch into `main`, push `main`, and
+delete the feature branch (local + remote). Do not open a PR unless
+explicitly asked.
+
 @AGENTS.md
