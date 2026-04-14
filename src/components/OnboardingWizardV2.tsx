@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { BackfillButton } from './BackfillButton'
 import {
   Loader2, ArrowRight, ArrowLeft, Sparkles, ThumbsUp, ThumbsDown,
-  CheckCircle, ExternalLink, Building2, Search, Target,
+  CheckCircle, Building2, Search, Target,
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────
@@ -27,8 +27,6 @@ interface ExampleTender {
   relevanceReason?: string | null
 }
 
-interface Buyer { id: string; name: string; label: string; country: string }
-
 interface GeneratedProfile {
   cpv_codes: string[]
   keywords: string[]
@@ -40,7 +38,7 @@ interface GeneratedProfile {
   reasoning: string
 }
 
-type Phase = 'basics' | 'sectors' | 'buyers' | 'tenders' | 'generating' | 'review' | 'done'
+type Phase = 'basics' | 'sectors' | 'tenders' | 'generating' | 'review' | 'done'
 
 const COUNTRIES = [
   { code: 'DK', name: 'Denmark', flag: '🇩🇰' },
@@ -236,17 +234,12 @@ export function OnboardingWizardV2({
   const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set(['DK']))
   const [valueRange, setValueRange] = useState('any')
 
-  // Step 4: Buyers
-  const [availableBuyers, setAvailableBuyers] = useState<Buyer[]>([])
-  const [selectedBuyerIds, setSelectedBuyerIds] = useState<Set<string>>(new Set())
-  const [customBuyer, setCustomBuyer] = useState('')
-
-  // Step 5: Tender swiping
+  // Step 3: Tender swiping
   const [exampleTenders, setExampleTenders] = useState<ExampleTender[]>([])
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set())
   const [dislikedIds, setDislikedIds] = useState<Set<string>>(new Set())
 
-  // Step 6: Generated profile
+  // Step 4: Generated profile
   const [generatedProfile, setGeneratedProfile] = useState<GeneratedProfile | null>(null)
 
   // ─── Phase transitions ───────────────────────────────────────────
@@ -274,45 +267,11 @@ export function OnboardingWizardV2({
     setLoading(false)
   }
 
-  async function goToBuyers() {
+  async function goToTenders() {
     if (selectedSectorIds.size === 0) return
     setLoading(true)
     setError(null)
     const sectors = availableSectors.filter(s => selectedSectorIds.has(s.id)).map(s => s.label)
-
-    try {
-      const res = await fetch('/api/ai/onboarding/buyers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          description,
-          country,
-          sectors,
-          subsectors: [],
-          countries: [...selectedCountries],
-        }),
-      })
-      const data = await res.json()
-      // Buyer suggestions are optional — if AI fails, still let user advance
-      // and add custom buyers manually.
-      setAvailableBuyers(Array.isArray(data.buyers) ? data.buyers : [])
-      setPhase('buyers')
-      if (!data.buyers || data.buyers.length === 0) {
-        setError('Could not auto-suggest buyers — you can add organizations manually below or skip this step.')
-      }
-    } catch {
-      setAvailableBuyers([])
-      setPhase('buyers')
-      setError('Could not auto-suggest buyers — add organizations manually or skip.')
-    }
-    setLoading(false)
-  }
-
-  async function goToTenders() {
-    setLoading(true)
-    setError(null)
-    const sectors = availableSectors.filter(s => selectedSectorIds.has(s.id)).map(s => s.label)
-    const selectedBuyers = availableBuyers.filter(b => selectedBuyerIds.has(b.id))
 
     try {
       const res = await fetch('/api/ai/onboarding/example-tenders', {
@@ -323,7 +282,6 @@ export function OnboardingWizardV2({
           sectors,
           subsectors: [],
           countries: [...selectedCountries],
-          buyers: selectedBuyers,
         }),
       })
       const data = await res.json()
@@ -346,7 +304,6 @@ export function OnboardingWizardV2({
     const sectors = availableSectors.filter(s => selectedSectorIds.has(s.id)).map(s => s.label)
     const liked = exampleTenders.filter(t => likedIds.has(t.id))
     const disliked = exampleTenders.filter(t => dislikedIds.has(t.id))
-    const selectedBuyers = availableBuyers.filter(b => selectedBuyerIds.has(b.id))
 
     const vr = VALUE_RANGES.find(v => v.id === valueRange)
 
@@ -363,7 +320,6 @@ export function OnboardingWizardV2({
           valueRange: vr?.range ? `${vr.range[0] || 0}-${vr.range[1] || 'unlimited'}` : null,
           likedTenders: liked,
           dislikedTenders: disliked,
-          preferredBuyers: selectedBuyers.map(b => b.name),
         }),
       })
       const data = await res.json()
@@ -504,7 +460,7 @@ export function OnboardingWizardV2({
 
   // ─── Progress bar ────────────────────────────────────────────────
 
-  const phases: Phase[] = ['basics', 'sectors', 'buyers', 'tenders', 'generating', 'review', 'done']
+  const phases: Phase[] = ['basics', 'sectors', 'tenders', 'generating', 'review', 'done']
   const phaseIndex = phases.indexOf(phase)
 
   // ─── Render ──────────────────────────────────────────────────────
@@ -513,7 +469,7 @@ export function OnboardingWizardV2({
     <div className="max-w-2xl mx-auto">
       {/* Progress */}
       <div className="flex items-center gap-1.5 mb-8">
-        {[0, 1, 2, 3, 4, 5].map((i) => (
+        {[0, 1, 2, 3, 4].map((i) => (
           <div
             key={i}
             className={`flex-1 h-1.5 rounded-full transition-colors ${i <= phaseIndex ? 'bg-blue-600' : 'bg-gray-200'}`}
@@ -666,84 +622,13 @@ export function OnboardingWizardV2({
               <ArrowLeft className="h-4 w-4" /> Back
             </button>
             <button
-              onClick={goToBuyers}
+              onClick={goToTenders}
               disabled={selectedSectorIds.size === 0 || loading}
               className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Building2 className="h-4 w-4" />}
-              {loading ? 'Finding buyers...' : 'Continue'}
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              {loading ? 'Searching TED...' : 'Show me tenders'}
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Phase: Buyers ── */}
-      {phase === 'buyers' && (
-        <div>
-          <AiMessage>
-            <p>Which public organizations would you like to monitor? <strong>Select the ones you&apos;d bid on tenders from:</strong></p>
-          </AiMessage>
-
-          <div className="flex flex-wrap gap-2 mt-2">
-            {availableBuyers.map(b => (
-              <ChoiceChip
-                key={b.id}
-                label={`${b.label} (${b.country})`}
-                selected={selectedBuyerIds.has(b.id)}
-                onClick={() => setSelectedBuyerIds(toggleSet(selectedBuyerIds, b.id))}
-              />
-            ))}
-          </div>
-
-          <div className="mt-4">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={customBuyer}
-                onChange={(e) => setCustomBuyer(e.target.value)}
-                className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                placeholder="Add a specific organization name..."
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && customBuyer.trim()) {
-                    const id = `custom-${Date.now()}`
-                    setAvailableBuyers(prev => [...prev, { id, name: customBuyer.trim(), label: customBuyer.trim(), country: country }])
-                    setSelectedBuyerIds(prev => { const next = new Set(prev); next.add(id); return next })
-                    setCustomBuyer('')
-                  }
-                }}
-              />
-              <button
-                onClick={() => {
-                  if (customBuyer.trim()) {
-                    const id = `custom-${Date.now()}`
-                    setAvailableBuyers(prev => [...prev, { id, name: customBuyer.trim(), label: customBuyer.trim(), country: country }])
-                    setSelectedBuyerIds(prev => { const next = new Set(prev); next.add(id); return next })
-                    setCustomBuyer('')
-                  }
-                }}
-                disabled={!customBuyer.trim()}
-                className="rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-600 hover:bg-gray-200 disabled:opacity-50"
-              >
-                Add
-              </button>
-            </div>
-            <p className="text-xs text-gray-400 mt-1">Know a specific organization? Type its name and press Enter.</p>
-          </div>
-
-          <div className="mt-8 flex items-center justify-between">
-            <button onClick={() => setPhase('sectors')} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
-              <ArrowLeft className="h-4 w-4" /> Back
-            </button>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={goToTenders}
-                disabled={loading}
-                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-              >
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                {loading ? 'Searching TED...' : `Show me tenders${selectedBuyerIds.size > 0 ? ` (${selectedBuyerIds.size} buyers)` : ''}`}
-              </button>
-            </div>
           </div>
         </div>
       )}
@@ -773,7 +658,7 @@ export function OnboardingWizardV2({
           </div>
 
           <div className="mt-6 flex items-center justify-between">
-            <button onClick={() => setPhase('buyers')} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
+            <button onClick={() => setPhase('sectors')} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
               <ArrowLeft className="h-4 w-4" /> Back
             </button>
             <button

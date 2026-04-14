@@ -39,7 +39,7 @@ src/
 - `src/lib/matching/engine.ts` — Core matching pipeline. Stage 1 cheap CPV/keyword filter (threshold 5) → Stage 2 Claude rerank (strict literal-match prompt). Blending: 80% AI + 20% Stage 1. Feeds followed titles as positive examples and dismissed titles as negative examples to Claude.
 - `src/lib/ai/relevance-score.ts` — Stage 1 scorer. CPV normalization (`padEnd(8, '0')`), skips broad CPVs ending in `000000`, topic-gated bonuses.
 - `src/lib/ted/parser.ts` — Parses TED API v3 responses into normalized tender rows.
-- `src/components/OnboardingWizardV2.tsx` — 7-phase AI-guided wizard: basics → sectors → buyers → tender swiping → generate → review → done.
+- `src/components/OnboardingWizardV2.tsx` — 6-phase AI-guided wizard: basics → sectors → tender swiping → generate → review → done.
 - `src/components/TenderCard.tsx` — Feed card with follow, dismiss, AI reason display.
 - `src/lib/notifications/email-digest.ts` — HTML email with responsive layout, score badges, AI one-liners.
 

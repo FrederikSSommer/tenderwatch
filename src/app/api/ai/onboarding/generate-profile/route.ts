@@ -15,7 +15,6 @@ export async function POST(request: NextRequest) {
     valueRange,
     likedTenders,
     dislikedTenders,
-    preferredBuyers,
   } = await request.json()
 
   const likedSection = (likedTenders || []).length > 0
@@ -42,9 +41,7 @@ ${likedSection}
 
 ${dislikedSection}
 
-${(preferredBuyers || []).length > 0 ? `PREFERRED BUYERS (they want tenders from these organizations):\n${preferredBuyers.map((b: string) => `- ${b}`).join('\n')}` : 'No specific buyers selected.'}
-
-Analyze what makes the liked tenders relevant and the disliked ones irrelevant. Factor in the preferred buyers when selecting keywords and CPV codes. Generate a monitoring profile.
+Analyze what makes the liked tenders relevant and the disliked ones irrelevant. Generate a monitoring profile.
 
 Return ONLY a JSON object:
 {
