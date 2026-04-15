@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/supabase/types'
-import { calculateRelevance } from '@/lib/ai/relevance-score'
 
 function getAI() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
@@ -117,7 +116,7 @@ export async function POST(request: NextRequest) {
   const { description, sectors, subsectors, countries, buyers } = await request.json()
 
   const sinceDate = new Date()
-  sinceDate.setDate(sinceDate.getDate() - 60)
+  sinceDate.setDate(sinceDate.getDate() - 180)
   const dateStr = sinceDate.toISOString().split('T')[0].replace(/-/g, '')
 
   const targetLangs = (countries || []).map((c: string) => COUNTRY_LANG[c]).filter(Boolean)
@@ -126,7 +125,7 @@ export async function POST(request: NextRequest) {
     : ''
 
   // ── Step 1: Ask Claude for CPV codes and keywords ──────────────────
-  const prompt = `You are an EU procurement expert. Based on these interests, suggest CPV codes and search keywords.
+  const prompt = `You are an EU procurement expert. Based on this company's actual products and services, suggest specific CPV prefixes and keywords for finding tenders they would realistically bid on.
 
 Company: "${description}"
 Sectors: ${(sectors || []).join(', ')}
@@ -136,14 +135,17 @@ ${langNote}
 
 Return ONLY a JSON object:
 {
-  "cpv_2digit": ["34", "71", "50"],
-  "keywords": ["maritime", "naval", "ship design", "defence"],
-  "native_keywords": ["fartøj", "værft", "forsvar", "marine"]
+  "cpv_prefixes": ["3452", "7124", "3552"],
+  "keywords": ["naval architecture", "vessel design", "shipbuilding"],
+  "native_keywords": ["skibsdesign", "værft", "fartøj"]
 }
 
-cpv_2digit: 3-5 two-digit CPV division codes (the first 2 digits of relevant 8-digit CPV codes). Include 50 (repair/maintenance) if relevant.
-keywords: 5-8 English keywords that would appear in relevant tender titles
-native_keywords: 3-6 keywords in the local language(s) of the target countries that would appear in tender titles on TED`
+cpv_prefixes: 4-8 FOUR-digit CPV prefixes matching the company's actual products/services.
+  Two-digit prefixes are TOO BROAD — "34" covers all transport (ships + cars + aircraft), "71" covers all architecture/engineering.
+  Use four-digit prefixes like "3452" (boats) or "7124" (architectural drawing) — specific enough to exclude unrelated industries.
+  Only include prefixes where the company would actually bid on or sell the corresponding products/services — NOT adjacent industries with superficial keyword overlap.
+keywords: 5-8 English keywords that would appear in tender TITLES (not just descriptions). Prefer specific service names over generic industry terms.
+native_keywords: 3-6 specific keywords in the local language(s) of the target countries that would appear in tender titles on TED.`
 
   let cpvPrefixes: string[] = []
   let keywords: string[] = []
@@ -158,7 +160,7 @@ native_keywords: 3-6 keywords in the local language(s) of the target countries t
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0])
-      cpvPrefixes = parsed.cpv_2digit || []
+      cpvPrefixes = parsed.cpv_prefixes || parsed.cpv_2digit || []
       keywords = [...(parsed.keywords || []), ...(parsed.native_keywords || [])]
     }
   } catch {
@@ -244,63 +246,78 @@ native_keywords: 3-6 keywords in the local language(s) of the target countries t
     } catch { /* best-effort — don't block wizard if DB write fails */ }
   }
 
-  // ── Step 4: Pre-filter with keyword/CPV prefix matching ─────────────
-  // Instead of calculateRelevance (which needs full 8-digit CPV codes we
-  // don't have yet), do a simpler prefix + keyword check directly.
-  const cpvPrefixSet = new Set(cpvPrefixes) // 2-digit prefixes like "34", "71"
+  // ── Step 4: Pre-filter — require BOTH CPV match AND keyword hit ─────
+  // A CPV match alone is too weak (even 4-digit prefixes cover many unrelated
+  // tenders); a keyword hit in the description alone is also too weak. Demand
+  // a combined signal, with title keywords counted stronger than description
+  // keywords.
   const kwLower = keywords.map(k => k.toLowerCase())
+  const tedCountrySet = new Set(
+    (countries || []).map((c: string) => COUNTRY_MAP[c] || c)
+  )
 
   const scored = candidates.map(t => {
-    let score = 0
     const titleLower = t.title.toLowerCase()
     const descLower = (t.description || '').toLowerCase()
 
-    // CPV prefix match (any tender CPV starting with a profile prefix)
+    // CPV prefix match (tender CPV starts with one of our 4-digit prefixes)
     const cpvMatch = t.cpvCodes.some(c => cpvPrefixes.some(p => c.startsWith(p)))
+    // Keyword signal: title match is much stronger than description match
+    const titleMatch = kwLower.some(kw => titleLower.includes(kw))
+    const descMatch = !titleMatch && kwLower.some(kw => descLower.includes(kw))
+
+    let score = 0
     if (cpvMatch) score += 20
+    if (titleMatch) score += 20
+    else if (descMatch) score += 8
 
-    // Keyword match in title (strong) or description (weaker)
-    for (const kw of kwLower) {
-      if (titleLower.includes(kw)) { score += 15; break }
-      if (descLower.includes(kw)) { score += 8; break }
+    // Country boost as a weak tiebreaker
+    if (score > 0 && t.buyerCountry && tedCountrySet.has(t.buyerCountry)) {
+      score += 5
     }
 
-    // Country match (only if topic signal exists)
-    if (score > 0 && t.buyerCountry) {
-      const tedCountrySet = new Set(
-        (countries || []).map((c: string) => COUNTRY_MAP[c] || c)
-      )
-      if (tedCountrySet.has(t.buyerCountry)) score += 10
-    }
+    // Must have BOTH CPV signal and some keyword signal to be considered
+    // confidently relevant — otherwise it's noise.
+    const hasBothSignals = cpvMatch && (titleMatch || descMatch)
 
-    return { tender: t, stage1: score }
+    return { tender: t, stage1: score, hasBothSignals }
   })
 
-  // Keep anything with at least a CPV or keyword match
   const stage1Pass = scored
-    .filter(s => s.stage1 >= 8)
+    .filter(s => s.hasBothSignals)
     .sort((a, b) => b.stage1 - a.stage1)
-    .slice(0, 50)
+    .slice(0, 40)
 
-  // ── Step 5: Claude re-rank (same prompt as shared engine) ──────────
+  // ── Step 5: Claude re-rank — strict relevance check ─────────────────
+  // Require score >= 7 (high confidence) and at least 3 strong matches.
+  // If fewer pass, return noMatches so the wizard can prompt the user to
+  // refine their description rather than showing weak examples.
+  const MIN_SCORE = 7
+  const MIN_GOOD_MATCHES = 3
+
   if (stage1Pass.length > 0) {
     try {
-      const profileDesc =
-        `Company: ${description}\n` +
-        `Sectors: ${(sectors || []).join(', ')}\n` +
-        `Keywords: ${keywords.slice(0, 10).join(', ')}\n` +
-        `CPV prefixes: ${cpvPrefixes.join(', ')}`
+      const filterPrompt = `You are evaluating which public tenders are relevant for a specific company.
 
-      const filterPrompt = `You are evaluating which public tenders are relevant for a company.
+THE COMPANY'S OWN WORDS (this is the SOURCE OF TRUTH — match what they actually do):
+"${description}"
 
-PROFILE
-${profileDesc}
+Declared sectors: ${(sectors || []).join(', ') || '(none)'}
+Target countries: ${(countries || []).join(', ') || '(none)'}
 
-Be STRICT and LITERAL. Match the actual product or service the company would buy or sell, not just shared sectors. Examples of WRONG matches:
-- a shipbuilding profile with workwear, hand guns, or canteen catering tenders
-- a software/IT profile with office furniture or printer toner
-- a road construction profile with traffic-light bulbs
-A weak buyer/CPV overlap is NOT enough — the actual subject of the tender must align with the profile.
+Be VERY STRICT. The tender's actual subject matter must match what the company does or sells — not merely share an industry keyword.
+
+RULES:
+- A naval architecture / ship-design firm wants VESSEL DESIGN, NAVAL ARCHITECTURE, MARINE ENGINEERING CONSULTANCY tenders. They do NOT want: marine equipment supply, oceanography research, port dredging, crew recruitment, or generic "maritime" procurement.
+- A software company wants SOFTWARE DEVELOPMENT or IT SERVICES tenders. They do NOT want: office furniture, cabling, generic "digital" projects unrelated to software.
+- A construction contractor wants BUILDING or INFRASTRUCTURE WORK tenders. They do NOT want: construction materials supply, surveying, or demolition-only.
+- Shared industry ≠ relevant. A weak CPV overlap alone is NOT a match. A shared keyword alone is NOT a match. The tender must be something this specific company could realistically bid on and deliver.
+
+Score 0-10 where:
+- 9-10: bulls-eye — clearly in the company's core service offering
+- 7-8: adjacent but plausible — still a realistic bid
+- 5-6: topic overlap but not what the company does → REJECT, do NOT include
+- 0-4: unrelated → REJECT
 
 CANDIDATES (numbered)
 ${stage1Pass.map((s, i) => `[${i}] "${s.tender.title}"
@@ -308,7 +325,7 @@ ${stage1Pass.map((s, i) => `[${i}] "${s.tender.title}"
    CPV: ${s.tender.cpvCodes.slice(0, 6).join(', ') || 'none'}
    ${s.tender.description ? s.tender.description.slice(0, 220) : ''}`).join('\n\n')}
 
-Return ONLY a JSON array, ordered by score descending. Include only tenders scoring 5 or higher (0-10). Maximum 12 entries.
+Return ONLY a JSON array of tenders scoring ${MIN_SCORE} or higher, ordered by score descending. Maximum 12 entries. It is BETTER to return an empty array than to include weak matches.
 Format: [{"i": 0, "score": 9, "why": "short reason"}, ...]`
 
       const msg = await getAI().messages.create({
@@ -325,14 +342,14 @@ Format: [{"i": 0, "score": 9, "why": "short reason"}, ...]`
       if (m) {
         const aiScored: { i: number; score: number; why?: string }[] = JSON.parse(m[0])
         const filtered = aiScored
-          .filter(s => typeof s.i === 'number' && s.score >= 5 && s.i >= 0 && s.i < stage1Pass.length)
+          .filter(s => typeof s.i === 'number' && s.score >= MIN_SCORE && s.i >= 0 && s.i < stage1Pass.length)
           .map(s => ({
             ...stage1Pass[s.i].tender,
             relevanceScore: s.score,
             relevanceReason: s.why || null,
           }))
 
-        if (filtered.length > 0) {
+        if (filtered.length >= MIN_GOOD_MATCHES) {
           return NextResponse.json({
             tenders: filtered,
             queriesRun: queries.length,
@@ -341,21 +358,28 @@ Format: [{"i": 0, "score": 9, "why": "short reason"}, ...]`
             filteredFrom: candidates.length,
           })
         }
+
+        // Too few strong matches — tell the wizard so it can prompt the
+        // user to refine their description instead of showing weak ones.
+        return NextResponse.json({
+          tenders: filtered,
+          noMatches: true,
+          queriesRun: queries.length,
+          cpvPrefixes,
+          keywords,
+          filteredFrom: candidates.length,
+        })
       }
     } catch (e) {
-      console.warn('AI relevance filter failed, falling back to Stage-1 results:', e)
+      console.warn('AI relevance filter failed:', e)
     }
   }
 
-  // Fallback: return top Stage-1 candidates unfiltered
-  const fallback = stage1Pass.slice(0, 12).map(s => ({
-    ...s.tender,
-    relevanceScore: Math.round(s.stage1 / 10),
-    relevanceReason: null,
-  }))
-
+  // Nothing passed Stage 1 (or Stage 2 failed entirely) — signal the
+  // wizard so it can ask the user to refine their description.
   return NextResponse.json({
-    tenders: fallback,
+    tenders: [],
+    noMatches: true,
     queriesRun: queries.length,
     cpvPrefixes,
     keywords,

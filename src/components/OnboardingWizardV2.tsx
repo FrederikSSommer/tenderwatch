@@ -285,11 +285,16 @@ export function OnboardingWizardV2({
         }),
       })
       const data = await res.json()
-      if (data.tenders && data.tenders.length > 0) {
+      if (data.noMatches || !data.tenders || data.tenders.length === 0) {
+        // Too few strong matches — prompt the user to refine rather than
+        // showing weakly-relevant tenders (which would poison the generated
+        // profile via forced thumbs-up/down).
+        setError(
+          'I couldn\'t find tenders that closely match your description from the last 180 days. Try making your description more specific about the exact services or products you offer, then continue again.'
+        )
+      } else {
         setExampleTenders(data.tenders)
         setPhase('tenders')
-      } else {
-        setError('No example tenders found. Try broadening your selections.')
       }
     } catch {
       setError('Failed to fetch tenders. Please try again.')
