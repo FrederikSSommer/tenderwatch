@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
     : ''
 
   // ── Step 1: Ask Claude for CPV codes and keywords ──────────────────
-  const prompt = `You are an EU procurement expert. Based on this company's actual products and services, suggest specific CPV prefixes and keywords for finding tenders they would realistically bid on.
+  const prompt = `You are an EU procurement expert. Based on this company's actual products and services, suggest CPV prefixes and keywords for finding tenders they would realistically bid on.
 
 Company: "${description}"
 Sectors: ${(sectors || []).join(', ')}
@@ -135,16 +135,18 @@ ${langNote}
 
 Return ONLY a JSON object:
 {
-  "cpv_prefixes": ["3452", "7124", "3552"],
+  "cpv_prefixes": ["345", "355", "7124", "73400000"],
   "keywords": ["naval architecture", "vessel design", "shipbuilding"],
   "native_keywords": ["skibsdesign", "værft", "fartøj"]
 }
 
-cpv_prefixes: 4-8 FOUR-digit CPV prefixes matching the company's actual products/services.
-  Two-digit prefixes are TOO BROAD — "34" covers all transport (ships + cars + aircraft), "71" covers all architecture/engineering.
-  Use four-digit prefixes like "3452" (boats) or "7124" (architectural drawing) — specific enough to exclude unrelated industries.
-  Only include prefixes where the company would actually bid on or sell the corresponding products/services — NOT adjacent industries with superficial keyword overlap.
-keywords: 5-8 English keywords that would appear in tender TITLES (not just descriptions). Prefer specific service names over generic industry terms.
+cpv_prefixes: 6-12 CPV prefixes or full codes that match the company's actual products/services.
+  Prefer 3-digit prefixes (like "345" for all ships+boats, "355" for all military equipment) when the WHOLE group is relevant.
+  Use 4-digit prefixes (like "3452" boats only) when only a sub-group is relevant.
+  Use full 8-digit codes (like "73400000" R&D for aviation/maritime) for very specific single categories.
+  AVOID 2-digit prefixes — "34" covers all transport (ships + cars + aircraft), too broad.
+  Only include prefixes for services/products the company would actually bid on — NOT adjacent industries with superficial overlap.
+keywords: 5-8 English keywords that would appear in tender TITLES. Prefer specific service names over generic industry terms.
 native_keywords: 3-6 specific keywords in the local language(s) of the target countries that would appear in tender titles on TED.`
 
   let cpvPrefixes: string[] = []
@@ -176,7 +178,7 @@ native_keywords: 3-6 specific keywords in the local language(s) of the target co
 
   // CPV-based queries
   if (cpvPrefixes.length > 0) {
-    const cpvFilter = cpvPrefixes.slice(0, 4).map(c => `classification-cpv=${c}*`).join(' OR ')
+    const cpvFilter = cpvPrefixes.slice(0, 10).map(c => `classification-cpv=${c}*`).join(' OR ')
     if (tedCountries.length > 0 && tedCountries.length <= 5) {
       const countryFilter = tedCountries.map((c: string) => `organisation-country-buyer=${c}`).join(' OR ')
       queries.push(`PD>=${dateStr} AND (${cpvFilter}) AND (${countryFilter})`)
@@ -186,7 +188,7 @@ native_keywords: 3-6 specific keywords in the local language(s) of the target co
 
   // Keyword-based queries
   if (keywords.length > 0) {
-    const kwFilter = keywords.slice(0, 6).map(k => `FT~"${k}"`).join(' OR ')
+    const kwFilter = keywords.slice(0, 8).map(k => `FT~"${k}"`).join(' OR ')
     if (tedCountries.length > 0) {
       const countryFilter = tedCountries.map((c: string) => `organisation-country-buyer=${c}`).join(' OR ')
       queries.push(`PD>=${dateStr} AND (${kwFilter}) AND (${countryFilter})`)
@@ -246,11 +248,13 @@ native_keywords: 3-6 specific keywords in the local language(s) of the target co
     } catch { /* best-effort — don't block wizard if DB write fails */ }
   }
 
-  // ── Step 4: Pre-filter — require BOTH CPV match AND keyword hit ─────
-  // A CPV match alone is too weak (even 4-digit prefixes cover many unrelated
-  // tenders); a keyword hit in the description alone is also too weak. Demand
-  // a combined signal, with title keywords counted stronger than description
-  // keywords.
+  // ── Step 4: Pre-filter — CPV match OR strong title match passes ─────
+  // TED titles are often in local language (Danish, Dutch, French), so an
+  // English keyword won't always appear in the title even for genuinely
+  // relevant tenders. CPV codes are the authoritative topic signal on TED,
+  // so a CPV-prefix match alone is enough to advance to Stage 2 (where
+  // Claude's strict rerank is the real quality gate). A description-only
+  // keyword hit is too weak to pass alone.
   const kwLower = keywords.map(k => k.toLowerCase())
   const tedCountrySet = new Set(
     (countries || []).map((c: string) => COUNTRY_MAP[c] || c)
@@ -260,15 +264,14 @@ native_keywords: 3-6 specific keywords in the local language(s) of the target co
     const titleLower = t.title.toLowerCase()
     const descLower = (t.description || '').toLowerCase()
 
-    // CPV prefix match (tender CPV starts with one of our 4-digit prefixes)
+    // CPV prefix match (tender CPV starts with one of our prefixes)
     const cpvMatch = t.cpvCodes.some(c => cpvPrefixes.some(p => c.startsWith(p)))
-    // Keyword signal: title match is much stronger than description match
     const titleMatch = kwLower.some(kw => titleLower.includes(kw))
     const descMatch = !titleMatch && kwLower.some(kw => descLower.includes(kw))
 
     let score = 0
     if (cpvMatch) score += 20
-    if (titleMatch) score += 20
+    if (titleMatch) score += 15
     else if (descMatch) score += 8
 
     // Country boost as a weak tiebreaker
@@ -276,17 +279,15 @@ native_keywords: 3-6 specific keywords in the local language(s) of the target co
       score += 5
     }
 
-    // Must have BOTH CPV signal and some keyword signal to be considered
-    // confidently relevant — otherwise it's noise.
-    const hasBothSignals = cpvMatch && (titleMatch || descMatch)
-
-    return { tender: t, stage1: score, hasBothSignals }
+    return { tender: t, stage1: score }
   })
 
+  // Pass anything with a CPV match (20) or title match (15). Description-
+  // only hits (8) are too weak. Stage 2 Claude rerank is the quality gate.
   const stage1Pass = scored
-    .filter(s => s.hasBothSignals)
+    .filter(s => s.stage1 >= 15)
     .sort((a, b) => b.stage1 - a.stage1)
-    .slice(0, 40)
+    .slice(0, 50)
 
   // ── Step 5: Claude re-rank — strict relevance check ─────────────────
   // Require score >= 7 (high confidence) and at least 3 strong matches.
