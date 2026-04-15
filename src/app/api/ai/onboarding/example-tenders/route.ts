@@ -235,10 +235,17 @@ export async function POST(request: NextRequest) {
   // ── Step 4 + 5: Score with the production matching core ────────────
   // Uses the same Stage-1 CPV/keyword scorer and Stage-2 Claude rerank
   // as the daily cron. Empty history = first-time user, no bias.
+  //
+  // Threshold is 5 (same as cron) so the swipe deck includes both
+  // bullseye matches (9-10) AND topic-overlap-but-not-core matches
+  // (5-6). The user needs both — likes refine the profile, dislikes
+  // teach Claude what to filter out when the final profile is generated.
   const candidates: MatchingTender[] = parsed
 
-  const MIN_GOOD_MATCHES = 3
-  const AI_SCORE_THRESHOLD = 7  // stricter than cron (5) — wizard is a preview
+  // Need at least this many STRONG matches (ai_score >= 7) for the wizard
+  // to feel useful. Below this, we ask the user to refine their description.
+  const MIN_STRONG_MATCHES = 3
+  const STRONG_SCORE = 7
 
   const scored = await scoreAndRerank(
     {
@@ -250,10 +257,11 @@ export async function POST(request: NextRequest) {
     {
       followedTitles: [],
       dismissedTitles: [],
-      stage1Threshold: 5,   // same as production cron
-      stage1Cap: 50,
+      stage1Threshold: 5,
+      stage1Cap: 60,
       aiBatchSize: 30,
-      aiScoreThreshold: AI_SCORE_THRESHOLD,
+      aiScoreThreshold: 5,
+      maxResults: 12,
     }
   )
 
@@ -277,7 +285,9 @@ export async function POST(request: NextRequest) {
     }
   })
 
-  if (results.length >= MIN_GOOD_MATCHES) {
+  const strongCount = results.filter(r => (r.relevanceScore ?? 0) >= STRONG_SCORE).length
+
+  if (strongCount >= MIN_STRONG_MATCHES) {
     return NextResponse.json({
       tenders: results,
       queriesRun: queries.length,
