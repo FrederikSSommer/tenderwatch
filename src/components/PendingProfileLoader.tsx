@@ -12,9 +12,12 @@ const VALUE_RANGES: Record<string, [number | null, number | null]> = {
   xlarge: [10000000, null],
 }
 
+type LoadStage = 'saving' | 'matching'
+
 /**
  * Checks sessionStorage for a profile saved during the public /try wizard.
- * If found, auto-saves it to the database and redirects to /feed.
+ * If found, auto-saves it to the database, runs a targeted backfill to
+ * populate the feed with relevant tenders, and only then redirects to /feed.
  * Returns null (renders nothing) while checking, or if no pending profile exists.
  */
 export function PendingProfileLoader({
@@ -25,6 +28,7 @@ export function PendingProfileLoader({
   const router = useRouter()
   const supabase = createClient()
   const [saving, setSaving] = useState(true)
+  const [stage, setStage] = useState<LoadStage>('saving')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -106,22 +110,43 @@ export function PendingProfileLoader({
 
         // Create monitoring profile
         const vr = VALUE_RANGES[pending.valueRange] ?? [null, null]
-        await supabase.from('monitoring_profiles').insert({
-          user_id: user.id,
-          name: pending.profile.profile_name || `${pending.companyName} profile`,
-          description: pending.description || null,
-          cpv_codes: pending.profile.cpv_codes,
-          keywords: pending.profile.keywords,
-          exclude_keywords: pending.profile.exclude_keywords,
-          countries: pending.profile.countries,
-          min_value_eur: pending.profile.min_value_eur ?? vr[0],
-          max_value_eur: pending.profile.max_value_eur ?? vr[1],
-        })
+        const { data: newProfile, error: profileErr } = await supabase
+          .from('monitoring_profiles')
+          .insert({
+            user_id: user.id,
+            name: pending.profile.profile_name || `${pending.companyName} profile`,
+            description: pending.description || null,
+            cpv_codes: pending.profile.cpv_codes,
+            keywords: pending.profile.keywords,
+            exclude_keywords: pending.profile.exclude_keywords,
+            countries: pending.profile.countries,
+            min_value_eur: pending.profile.min_value_eur ?? vr[0],
+            max_value_eur: pending.profile.max_value_eur ?? vr[1],
+          })
+          .select('id')
+          .single()
 
-        // Clear the pending data
+        if (profileErr || !newProfile) {
+          throw profileErr ?? new Error('Failed to create profile')
+        }
+
+        // Clear the pending data now that the profile is persisted.
         sessionStorage.removeItem('tenderwatch_pending_profile')
 
-        // Redirect to feed
+        // Run the targeted backfill synchronously before redirecting so the
+        // user arrives at a populated feed instead of an empty state.
+        setStage('matching')
+        try {
+          await fetch('/api/backfill', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ days: 90, profileId: newProfile.id }),
+          })
+        } catch (backfillErr) {
+          // Non-fatal — the feed will still work, just without initial matches.
+          console.warn('Backfill failed, continuing to feed:', backfillErr)
+        }
+
         router.push('/feed')
         router.refresh()
       } catch (err) {
@@ -157,9 +182,13 @@ export function PendingProfileLoader({
       <div className="inline-flex items-center justify-center h-16 w-16 rounded-full bg-blue-100 mb-4">
         <Sparkles className="h-8 w-8 text-blue-600 animate-pulse" />
       </div>
-      <h2 className="text-xl font-bold text-gray-900">Setting up your profile...</h2>
+      <h2 className="text-xl font-bold text-gray-900">
+        {stage === 'saving' ? 'Setting up your profile...' : 'Finding your first tenders...'}
+      </h2>
       <p className="text-sm text-gray-500 mt-2">
-        Saving the profile you created. Just a moment.
+        {stage === 'saving'
+          ? 'Saving the profile you created. Just a moment.'
+          : 'Scanning the last 90 days of EU procurement. This usually takes about a minute.'}
       </p>
       <Loader2 className="h-5 w-5 animate-spin text-blue-600 mx-auto mt-4" />
     </div>

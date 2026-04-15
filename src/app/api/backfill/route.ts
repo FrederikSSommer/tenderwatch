@@ -105,7 +105,10 @@ export async function POST(request: NextRequest) {
         stage1Threshold: 5,
         stage1Cap: 120,
         aiBatchSize: 30,
-        aiScoreThreshold: 5,
+        // Only write strong matches (ai_score >= 7) for the initial feed
+        // population. The daily cron uses 5+ for ongoing discovery, but on
+        // day 1 we want to avoid a feed full of marginal 5-6 tenders.
+        aiScoreThreshold: 7,
       }
     )
 
