@@ -242,6 +242,11 @@ export function OnboardingWizardV2({
   // Step 4: Generated profile
   const [generatedProfile, setGeneratedProfile] = useState<GeneratedProfile | null>(null)
 
+  // Auto-backfill state — runs automatically after profile is saved
+  const [backfillRunning, setBackfillRunning] = useState(false)
+  const [backfillMatches, setBackfillMatches] = useState<number | null>(null)
+  const [backfillError, setBackfillError] = useState(false)
+
   // ─── Phase transitions ───────────────────────────────────────────
 
   async function goToSectors() {
@@ -428,6 +433,25 @@ export function OnboardingWizardV2({
       }
 
       console.log('Profile saved:', newProfile?.id)
+
+      // Fire backfill in the background — don't await, just kick it off
+      // so the user sees the 'done' phase immediately without waiting.
+      setBackfillRunning(true)
+      setBackfillError(false)
+      fetch('/api/backfill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: 90 }),
+      })
+        .then(r => r.json())
+        .then(data => {
+          setBackfillMatches(data.matched ?? 0)
+          setBackfillRunning(false)
+        })
+        .catch(() => {
+          setBackfillRunning(false)
+          setBackfillError(true)
+        })
     } catch (err) {
       setError(`Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
       setLoading(false)
@@ -781,7 +805,7 @@ export function OnboardingWizardV2({
             <p className="text-sm text-gray-500 mt-2">
               {isPublic
                 ? 'Sign up to activate your profile and start receiving matched tenders in your inbox every morning.'
-                : 'Your daily feed will update every morning. You can also backfill historical tenders now:'}
+                : 'Searching the last 90 days of EU procurement for matching tenders…'}
             </p>
           </div>
 
@@ -806,11 +830,42 @@ export function OnboardingWizardV2({
             </div>
           ) : (
             <>
-              <BackfillButton />
-              <div className="mt-8 flex justify-center gap-3">
+              {/* Auto-backfill status */}
+              <div className="rounded-lg border border-gray-200 bg-white p-5 mb-6">
+                {backfillRunning && (
+                  <div className="flex items-center gap-3 text-sm text-gray-600">
+                    <Loader2 className="h-5 w-5 text-blue-600 animate-spin flex-shrink-0" />
+                    <div>
+                      <p className="font-medium text-gray-900">Finding your first tenders…</p>
+                      <p className="text-gray-500 mt-0.5">Searching the last 90 days of EU procurement. This usually takes about a minute.</p>
+                    </div>
+                  </div>
+                )}
+                {!backfillRunning && backfillMatches !== null && (
+                  <div className="flex items-center gap-3 text-sm">
+                    <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0" />
+                    <div>
+                      <p className="font-medium text-gray-900">
+                        {backfillMatches > 0
+                          ? `Found ${backfillMatches} matching tender${backfillMatches !== 1 ? 's' : ''} in the last 90 days`
+                          : "Feed is ready \u2014 new tenders will appear as they are published"}
+                      </p>
+                      <p className="text-gray-500 mt-0.5">Your daily digest will run every morning at 7am.</p>
+                    </div>
+                  </div>
+                )}
+                {!backfillRunning && backfillError && (
+                  <div className="space-y-3">
+                    <p className="text-sm text-gray-600">Automatic search did not complete &mdash; you can run it manually:</p>
+                    <BackfillButton compact />
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-center gap-3">
                 <button
                   onClick={() => router.push(isAdditionalProfile ? '/profiles' : '/feed')}
-                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-3 text-sm font-semibold text-white hover:bg-blue-700"
+                  disabled={backfillRunning}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
                 >
                   {isAdditionalProfile ? 'Back to profiles' : 'Go to my feed'}
                   <ArrowRight className="h-4 w-4" />
