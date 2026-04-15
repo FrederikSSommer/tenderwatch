@@ -434,14 +434,15 @@ export function OnboardingWizardV2({
 
       console.log('Profile saved:', newProfile?.id)
 
-      // Fire backfill in the background — don't await, just kick it off
-      // so the user sees the 'done' phase immediately without waiting.
+      // Fire targeted backfill in the background — pass the new profile ID so
+      // the endpoint uses the final saved CPV codes instead of a generic broad
+      // ingest. Don't await so the user sees the 'done' phase immediately.
       setBackfillRunning(true)
       setBackfillError(false)
       fetch('/api/backfill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days: 90 }),
+        body: JSON.stringify({ days: 90, profileId: newProfile.id }),
       })
         .then(r => r.json())
         .then(data => {

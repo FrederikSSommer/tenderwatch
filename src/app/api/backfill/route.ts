@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/supabase/types'
 import { ingestRecentTenders } from '@/lib/ted/ingest'
 import { matchNewTenders } from '@/lib/matching/engine'
+import { scoreAndRerank } from '@/lib/matching/core'
 
 function getServiceClient() {
   return createClient<Database>(
@@ -17,12 +18,16 @@ const MAX_DAYS = 90
 /**
  * Manual backfill — run on demand from the dashboard.
  *
- * Two stages, both reusing the shared infrastructure:
- *  1. Broad TED ingestion into the shared `tenders` table (same path the
- *     daily cron uses — no per-user filtering)
- *  2. Matching engine (Stage-1 keyword/CPV scoring + Stage-2 Claude rerank,
- *     scoped to this user's profiles, with cache so we never re-score the
- *     same pair twice)
+ * Two modes:
+ *
+ * TARGETED (profileId provided — used by the onboarding wizard):
+ *   Skips the broad TED ingest. Queries the `tenders` table for CPV overlap
+ *   with the named profile's CPV codes, then runs scoreAndRerank. Fast and
+ *   guaranteed to use the final saved profile CPVs.
+ *
+ * BROAD (no profileId — used by the manual BackfillButton):
+ *   1. Broad TED ingestion into the shared `tenders` table
+ *   2. Matching engine across all user profiles
  */
 export async function POST(request: NextRequest) {
   const supabase = await createServerSupabaseClient()
@@ -33,11 +38,98 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => ({}))
   const days = Math.min(Math.max(Number(body.days) || 7, 1), MAX_DAYS)
+  const profileId: string | undefined = body.profileId
 
   const since = new Date()
   since.setDate(since.getDate() - days)
+  const sinceStr = since.toISOString().split('T')[0]
 
   const serviceClient = getServiceClient()
+
+  // ── TARGETED MODE ─────────────────────────────────────────────────────────
+  // When a specific profileId is passed, skip broad TED ingest entirely.
+  // Instead, query the tenders table for CPV overlap with the profile and run
+  // scoreAndRerank directly. Much faster and uses the final profile CPVs.
+  if (profileId) {
+    const { data: profile } = await serviceClient
+      .from('monitoring_profiles')
+      .select('*')
+      .eq('id', profileId)
+      .eq('user_id', user.id)
+      .single()
+
+    if (!profile) {
+      return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
+    }
+
+    const cpvs = profile.cpv_codes || []
+    if (cpvs.length === 0) {
+      return NextResponse.json({ success: true, ingested: 0, matched: 0, days })
+    }
+
+    const { data: tenderRows } = await serviceClient
+      .from('tenders')
+      .select('id, title, description, buyer_name, buyer_country, cpv_codes, estimated_value_eur')
+      .gte('publication_date', sinceStr)
+      .overlaps('cpv_codes', cpvs)
+      .limit(500)
+
+    if (!tenderRows || tenderRows.length === 0) {
+      return NextResponse.json({ success: true, ingested: 0, matched: 0, days })
+    }
+
+    const scored = await scoreAndRerank(
+      {
+        id: profile.id,
+        name: profile.name,
+        description: profile.description ?? null,
+        keywords: profile.keywords || [],
+        cpv_codes: cpvs,
+        exclude_keywords: profile.exclude_keywords || [],
+        countries: profile.countries || [],
+        min_value_eur: profile.min_value_eur,
+        max_value_eur: profile.max_value_eur,
+      },
+      tenderRows.map(t => ({
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        buyer_name: t.buyer_name,
+        buyer_country: t.buyer_country,
+        cpv_codes: t.cpv_codes || [],
+        estimated_value_eur: t.estimated_value_eur,
+      })),
+      {
+        followedTitles: [],
+        dismissedTitles: [],
+        stage1Threshold: 5,
+        stage1Cap: 120,
+        aiBatchSize: 30,
+        aiScoreThreshold: 5,
+      }
+    )
+
+    let matched = 0
+    if (scored.length > 0) {
+      const { error } = await serviceClient.from('matches').upsert(
+        scored.map(m => ({
+          tender_id: m.tender.id,
+          profile_id: profile.id,
+          user_id: user.id,
+          relevance_score: m.blended_score,
+          matched_cpv: m.matched_cpv,
+          matched_keywords: m.matched_keywords,
+          ai_reason: m.ai_reason,
+        })),
+        { onConflict: 'tender_id,profile_id' }
+      )
+      if (!error) matched = scored.length
+    }
+
+    return NextResponse.json({ success: true, ingested: 0, matched, days })
+  }
+
+  // ── BROAD MODE ────────────────────────────────────────────────────────────
 
   // Bail early if the user has no profile to score against
   const { data: profiles } = await serviceClient
@@ -56,8 +148,7 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  // Stage 1: check if we already have tenders for this period before hitting TED
-  const sinceStr = since.toISOString().split('T')[0]
+  // Check if we already have tenders for this period before hitting TED
   const { count } = await serviceClient
     .from('tenders')
     .select('id', { count: 'exact', head: true })
@@ -65,12 +156,10 @@ export async function POST(request: NextRequest) {
 
   let ingest = { ingested: 0, pages: 0, errors: [] as string[] }
   if ((count ?? 0) < 50) {
-    // Not enough tenders locally — fetch from TED
     ingest = await ingestRecentTenders(serviceClient, since, { maxPages: 30 })
   }
 
-  // Stage 2: score this user's profiles against the shared pool
-  // (uses Stage-1 keyword/CPV filter + Stage-2 Claude rerank, with cache)
+  // Score all user profiles against the shared pool
   let matched = 0
   try {
     const matches = await matchNewTenders(since, {
