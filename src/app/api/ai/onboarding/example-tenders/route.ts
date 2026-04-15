@@ -238,29 +238,26 @@ export async function POST(request: NextRequest) {
   dbSinceDate.setDate(dbSinceDate.getDate() - 90)
   const dbSinceStr = dbSinceDate.toISOString().split('T')[0]
 
-  // Expand profile CPVs to also include parent codes (5-digit and
-  // 3-digit zero-padded variants). PostgREST `overlaps` requires exact
-  // element equality, so this widens the net to catch sibling/parent
-  // matches without a free-text query.
-  const expandedCpvs = new Set<string>()
-  for (const c of cpv_codes) {
-    expandedCpvs.add(c)
-    expandedCpvs.add(c.slice(0, 5).padEnd(8, '0'))
-    expandedCpvs.add(c.slice(0, 3).padEnd(8, '0'))
-  }
-  const expandedCpvArr = [...expandedCpvs]
+  // Pre-filter the DB pull by EXACT CPV overlap. Earlier we tried
+  // expanding to 3-digit parents, but that pulled e.g. profile CPV
+  // "71240000" (architectural drawing) up to "71200000" (generic
+  // building architecture) and then matched every building-architecture
+  // tender in the table — completely off-topic for a naval architect.
+  // Sibling matching (e.g. 34510000 ↔ 34520000) is handled by TED
+  // queries using 4-digit prefixes; the DB pull stays strict.
+  const exactCpvs = [...new Set(cpv_codes)]
 
   const dbCandidates: MatchingTender[] = []
   const dbExtras = new Map<string, { buyerName: string | null; tedUrl: string | null; noticeType: string | null; publicationDate: string | null }>()
   const tedExternalIds = new Set(parsed.map(p => p.externalId))
   const seenDbExternalIds = new Set<string>()
 
-  if (expandedCpvArr.length > 0) {
+  if (exactCpvs.length > 0) {
     const { data, error } = await supabase
       .from('tenders')
       .select('id, external_id, title, description, buyer_name, buyer_country, cpv_codes, estimated_value_eur, ted_url, tender_type, publication_date')
       .gte('publication_date', dbSinceStr)
-      .overlaps('cpv_codes', expandedCpvArr)
+      .overlaps('cpv_codes', exactCpvs)
       .limit(500)
 
     if (error) {
@@ -288,7 +285,7 @@ export async function POST(request: NextRequest) {
       }
     }
   }
-  console.log(`[example-tenders] candidates: TED=${parsed.length}, DB=${dbCandidates.length}, profile_cpvs=${cpv_codes.length}, expanded_cpvs=${expandedCpvArr.length}`)
+  console.log(`[example-tenders] candidates: TED=${parsed.length}, DB=${dbCandidates.length}, profile_cpvs=${cpv_codes.length}`)
 
 
   // Combined candidate pool: live TED results + previously-ingested
@@ -355,11 +352,15 @@ export async function POST(request: NextRequest) {
     }
   })
 
-  // Show whatever Claude validated (score >= 5). Only trip the
-  // refine-your-description prompt if Claude returned literally nothing.
+  // Require at least one strong match (ai_score >= 7) to avoid showing a
+  // deck of loosely-related 5-6 tenders that would confuse the user. If
+  // all Claude returned are mid-tier, treat it as "no matches" so the
+  // wizard prompts to refine the description.
+  const hasStrongMatch = results.some(r => (r.relevanceScore ?? 0) >= 7)
+
   return NextResponse.json({
-    tenders: results,
-    noMatches: results.length === 0,
+    tenders: hasStrongMatch ? results : [],
+    noMatches: results.length === 0 || !hasStrongMatch,
     queriesRun: queries.length,
     cpvCodes: cpv_codes,
     keywords,
