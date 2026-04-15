@@ -229,53 +229,66 @@ export async function POST(request: NextRequest) {
   // wizard the same candidate pool that powers the live feed for
   // existing users — including local-language tenders that an English
   // free-text query wouldn't surface.
+  //
+  // CRITICAL: we pre-filter by CPV-array overlap so we only pull
+  // tenders that share at least one CPV element with the inferred
+  // profile. Pulling everything in the last 90 days swamps the Stage-1
+  // pool and pushes the bullseye TED matches out of the top-N cap.
   const dbSinceDate = new Date()
   dbSinceDate.setDate(dbSinceDate.getDate() - 90)
   const dbSinceStr = dbSinceDate.toISOString().split('T')[0]
 
+  // Expand profile CPVs to also include parent codes (5-digit and
+  // 3-digit zero-padded variants). PostgREST `overlaps` requires exact
+  // element equality, so this widens the net to catch sibling/parent
+  // matches without a free-text query.
+  const expandedCpvs = new Set<string>()
+  for (const c of cpv_codes) {
+    expandedCpvs.add(c)
+    expandedCpvs.add(c.slice(0, 5).padEnd(8, '0'))
+    expandedCpvs.add(c.slice(0, 3).padEnd(8, '0'))
+  }
+  const expandedCpvArr = [...expandedCpvs]
+
   const dbCandidates: MatchingTender[] = []
-  // Extras keyed by tender id — needed for response mapping to recover
-  // buyerName / tedUrl / publicationDate without an extra round-trip.
   const dbExtras = new Map<string, { buyerName: string | null; tedUrl: string | null; noticeType: string | null; publicationDate: string | null }>()
-  // External IDs already covered by the TED fetch above; skip them when
-  // pulling from DB to avoid duplicate scoring.
   const tedExternalIds = new Set(parsed.map(p => p.externalId))
   const seenDbExternalIds = new Set<string>()
 
-  // Paginate through the tenders table (Supabase caps at 1000 per page).
-  // Capped at 5000 rows max to keep wizard latency bounded.
-  const MAX_DB_PAGES = 5
-  const PAGE_SIZE = 1000
-  for (let page = 0; page < MAX_DB_PAGES; page++) {
+  if (expandedCpvArr.length > 0) {
     const { data, error } = await supabase
       .from('tenders')
       .select('id, external_id, title, description, buyer_name, buyer_country, cpv_codes, estimated_value_eur, ted_url, tender_type, publication_date')
       .gte('publication_date', dbSinceStr)
-      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
-    if (error || !data || data.length === 0) break
-    for (const row of data) {
-      if (tedExternalIds.has(row.external_id)) continue
-      if (seenDbExternalIds.has(row.external_id)) continue
-      seenDbExternalIds.add(row.external_id)
-      dbCandidates.push({
-        id: row.id,
-        title: row.title,
-        description: row.description,
-        buyer_name: row.buyer_name,
-        buyer_country: row.buyer_country,
-        cpv_codes: row.cpv_codes || [],
-        estimated_value_eur: row.estimated_value_eur,
-      })
-      dbExtras.set(row.id, {
-        buyerName: row.buyer_name,
-        tedUrl: row.ted_url,
-        noticeType: row.tender_type,
-        publicationDate: row.publication_date,
-      })
+      .overlaps('cpv_codes', expandedCpvArr)
+      .limit(500)
+
+    if (error) {
+      console.warn('[example-tenders] DB candidate pull failed:', error.message)
+    } else if (data) {
+      for (const row of data) {
+        if (tedExternalIds.has(row.external_id)) continue
+        if (seenDbExternalIds.has(row.external_id)) continue
+        seenDbExternalIds.add(row.external_id)
+        dbCandidates.push({
+          id: row.id,
+          title: row.title,
+          description: row.description,
+          buyer_name: row.buyer_name,
+          buyer_country: row.buyer_country,
+          cpv_codes: row.cpv_codes || [],
+          estimated_value_eur: row.estimated_value_eur,
+        })
+        dbExtras.set(row.id, {
+          buyerName: row.buyer_name,
+          tedUrl: row.ted_url,
+          noticeType: row.tender_type,
+          publicationDate: row.publication_date,
+        })
+      }
     }
-    if (data.length < PAGE_SIZE) break
   }
-  console.log(`[example-tenders] DB candidates: ${dbCandidates.length} (TED added ${parsed.length})`)
+  console.log(`[example-tenders] candidates: TED=${parsed.length}, DB=${dbCandidates.length}, profile_cpvs=${cpv_codes.length}, expanded_cpvs=${expandedCpvArr.length}`)
 
 
   // Combined candidate pool: live TED results + previously-ingested
@@ -301,11 +314,6 @@ export async function POST(request: NextRequest) {
   // bullseye matches (9-10) AND topic-overlap-but-not-core matches
   // (5-6). The user needs both — likes refine the profile, dislikes
   // teach Claude what to filter out when the final profile is generated.
-
-  // Need at least this many STRONG matches (ai_score >= 7) for the wizard
-  // to feel useful. Below this, we ask the user to refine their description.
-  const MIN_STRONG_MATCHES = 3
-  const STRONG_SCORE = 7
 
   const scored = await scoreAndRerank(
     {
@@ -347,24 +355,14 @@ export async function POST(request: NextRequest) {
     }
   })
 
-  const strongCount = results.filter(r => (r.relevanceScore ?? 0) >= STRONG_SCORE).length
-
-  if (strongCount >= MIN_STRONG_MATCHES) {
-    return NextResponse.json({
-      tenders: results,
-      queriesRun: queries.length,
-      cpvCodes: cpv_codes,
-      keywords,
-      filteredFrom: parsed.length,
-    })
-  }
-
+  // Show whatever Claude validated (score >= 5). Only trip the
+  // refine-your-description prompt if Claude returned literally nothing.
   return NextResponse.json({
     tenders: results,
-    noMatches: true,
+    noMatches: results.length === 0,
     queriesRun: queries.length,
     cpvCodes: cpv_codes,
     keywords,
-    filteredFrom: parsed.length,
+    filteredFrom: candidates.length,
   })
 }
