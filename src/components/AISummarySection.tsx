@@ -40,9 +40,9 @@ export function AISummarySection({ tenderId, existingSummary }: AISummarySection
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-5">
         <div className="flex items-center gap-2 mb-3">
           <Sparkles className="h-5 w-5 text-blue-600" />
-          <h3 className="text-sm font-semibold text-blue-900">AI Summary</h3>
+          <h3 className="text-sm font-semibold text-blue-800">AI Summary</h3>
         </div>
-        <div className="text-sm text-blue-900 whitespace-pre-wrap leading-relaxed">
+        <div className="text-sm text-blue-800 whitespace-pre-wrap leading-relaxed">
           {summary}
         </div>
       </div>
