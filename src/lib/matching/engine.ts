@@ -1,12 +1,7 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/supabase/types'
-import {
-  calculateRelevance,
-  extractLearnedKeywords,
-  LearnedSignals,
-  ScoreResult,
-} from '@/lib/ai/relevance-score'
-import Anthropic from '@anthropic-ai/sdk'
+import { extractLearnedKeywords, LearnedSignals } from '@/lib/ai/relevance-score'
+import { scoreAndRerank, MatchingTender } from './core'
 
 export interface MatchResult {
   tender_id: string
@@ -18,27 +13,19 @@ export interface MatchResult {
   ai_reason: string | null
 }
 
-// Stage-1 (cheap) keyword/CPV threshold. The Stage-2 Claude rerank is the
-// real arbiter — Stage 1 just trims the candidate pool before AI cost.
-// Set low (5) so any CPV or keyword signal at all passes through to Claude.
+// Stage-1 threshold: any CPV or keyword signal passes through to Claude.
+// Claude is the real arbiter — Stage 1 just trims the candidate pool.
 const STAGE1_THRESHOLD = 5
-
-// Maximum number of Stage-1 candidates per profile that get sent to Claude
-// per run. Raised to 120 to give Claude more to work with.
+// Maximum Stage-1 survivors per profile sent to Claude per run.
 const AI_FILTER_CAP = 120
-
-// Batch size when calling Claude for relevance scoring
+// Claude batch size.
 const AI_BATCH_SIZE = 30
-
-function getAnthropicClient() {
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
-}
 
 type SupabaseSrv = SupabaseClient<Database>
 
 // Default to a service-role client when no client is injected. The matching
-// engine needs to read across users (cron) or score against any tender
-// regardless of RLS, so anon access isn't enough.
+// engine reads across users (cron) or scores any tender regardless of RLS,
+// so anon access isn't enough.
 function getDefaultClient(): SupabaseSrv {
   return createClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -90,8 +77,7 @@ async function fetchLearnedSignalsByUser(
   return out
 }
 
-// Fetch followed tender titles per user — shown to Claude so it learns
-// what the user actually cares about.
+// Fetch followed tender titles per user — fed to Claude as positive examples.
 async function fetchFollowedTitlesByUser(
   supabase: SupabaseSrv,
   userIds: string[]
@@ -119,8 +105,7 @@ async function fetchFollowedTitlesByUser(
   return out
 }
 
-// Fetch dismissed tender titles per user — shown to Claude so it learns
-// what the user does NOT want.
+// Fetch dismissed tender titles per user — fed to Claude as negative examples.
 async function fetchDismissedTitlesByUser(
   supabase: SupabaseSrv,
   userIds: string[]
@@ -148,117 +133,11 @@ async function fetchDismissedTitlesByUser(
   return out
 }
 
-interface RerankCandidate {
-  tender_id: string
-  profile_id: string
-  user_id: string
-  stage1_score: number
-  matched_cpv: string[]
-  matched_keywords: string[]
-  tender: {
-    id: string
-    title: string
-    description: string | null
-    buyer_name: string | null
-    buyer_country: string | null
-    cpv_codes: string[]
-  }
-}
-
-interface ProfileSnapshot {
-  id: string
-  name: string | null
-  description: string | null
-  keywords: string[]
-  cpv_codes: string[]
-  exclude_keywords: string[]
-  followedTitles: string[]
-  dismissedTitles: string[]
-}
-
-interface AiResult { score: number; why: string | null }
-
-// Stage-2: Claude rerank — strict literal-match prompt mirroring the wizard.
-// Returns AI scores + reason by tender_id.
-async function aiRerank(
-  profile: ProfileSnapshot,
-  candidates: RerankCandidate[]
-): Promise<Map<string, AiResult>> {
-  const out = new Map<string, AiResult>()
-  if (candidates.length === 0) return out
-
-  const profileSnapshot =
-    `Name: ${profile.name || 'monitoring profile'}\n` +
-    (profile.description ? `Description: ${profile.description}\n` : '') +
-    `Topic keywords: ${profile.keywords.slice(0, 12).join(', ') || '(none)'}\n` +
-    `CPV codes (8-digit): ${profile.cpv_codes.slice(0, 12).join(', ') || '(none)'}\n` +
-    `Excluded terms: ${profile.exclude_keywords.join(', ') || '(none)'}` +
-    (profile.followedTitles.length > 0
-      ? `\n\nTenders this user has previously followed (use these to understand what they care about):\n${profile.followedTitles.slice(0, 10).map(t => `- ${t}`).join('\n')}`
-      : '') +
-    (profile.dismissedTitles.length > 0
-      ? `\n\nTenders this user has DISMISSED as NOT relevant (use these to understand what they do NOT want — score similar tenders low):\n${profile.dismissedTitles.slice(0, 15).map(t => `- ${t}`).join('\n')}`
-      : '')
-
-  for (let offset = 0; offset < candidates.length; offset += AI_BATCH_SIZE) {
-    const batch = candidates.slice(offset, offset + AI_BATCH_SIZE)
-    const prompt = `You are evaluating which public tenders are actually relevant to a buyer's monitoring profile.
-
-PROFILE
-${profileSnapshot}
-
-Be STRICT and LITERAL. The question is: "Would this company realistically bid on this tender?"
-Only match tenders where the company's core services or products are what the tender is procuring.
-
-Examples of WRONG matches:
-- A naval architecture firm matched with marine equipment spare parts (they design ships, not sell parts)
-- A shipbuilding company matched with workwear, canteen catering, or cleaning services for a navy buyer
-- A software/IT company matched with office furniture or printer toner
-- A road construction company matched with traffic-light bulbs
-
-A shared sector keyword (e.g. "marine", "maritime") is NOT enough. The tender must procure what the company actually delivers.
-
-CANDIDATES (numbered)
-${batch.map((c, i) => `[${i}] "${c.tender.title}"
-   Buyer: ${c.tender.buyer_name || '?'}${c.tender.buyer_country ? ` (${c.tender.buyer_country})` : ''}
-   CPV: ${(c.tender.cpv_codes || []).slice(0, 6).join(', ') || 'none'}
-   ${c.tender.description ? c.tender.description.slice(0, 220) : ''}`).join('\n\n')}
-
-Return ONLY a JSON array. Include ONLY entries scoring 5 or higher (0-10 scale). Format:
-[{"i": 0, "score": 9, "why": "short reason"}, {"i": 3, "score": 7, "why": "short reason"}, ...]`
-
-    try {
-      const msg = await getAnthropicClient().messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
-        messages: [
-          { role: 'user', content: prompt },
-          { role: 'assistant', content: '[' },
-        ],
-      })
-      const text = msg.content[0].type === 'text' ? '[' + msg.content[0].text : '[]'
-      const m = text.match(/\[[\s\S]*?\]/)
-      if (!m) continue
-      const scored: { i: number; score: number; why?: string }[] = JSON.parse(m[0])
-      for (const s of scored) {
-        if (typeof s.i !== 'number' || s.score < 5) continue
-        if (s.i < 0 || s.i >= batch.length) continue
-        out.set(batch[s.i].tender_id, { score: s.score, why: s.why || null })
-      }
-    } catch (err) {
-      console.error('AI rerank batch failed:', err)
-      // On failure, accept the Stage-1 candidates as-is for this batch
-      for (const c of batch) out.set(c.tender_id, { score: 6, why: null })
-    }
-  }
-  return out
-}
-
 export interface MatchOptions {
   /**
    * Restrict matching to a single user's profiles. Used by the manual
    * backfill route. When omitted, scores against ALL active profiles
-   * (used by the daily cron).
+   * (daily cron).
    */
   userId?: string
   /**
@@ -270,12 +149,12 @@ export interface MatchOptions {
 /**
  * Score tenders published since `since` against monitoring profiles.
  *
- * Pipeline:
+ * Pipeline (orchestration + persistence only — scoring delegates to
+ * `src/lib/matching/core.ts` so the wizard can reuse the same logic):
  *   1. Pull tenders from the shared `tenders` table (filled by ingest cron)
- *   2. Stage-1: cheap keyword/CPV scoring → drop pairs below threshold
- *   3. Cache check: skip (profile, tender) pairs already in `matches`
- *   4. Stage-2: Claude rerank with strict literal-match prompt
- *   5. Persist new matches with blended score (60% AI × 10 + 40% Stage-1)
+ *   2. Cache check: skip (profile, tender) pairs already in `matches`
+ *   3. Per profile: call `scoreAndRerank` with user history + learned signals
+ *   4. Persist results
  */
 export async function matchNewTenders(
   since: Date,
@@ -327,7 +206,7 @@ export async function matchNewTenders(
 
   // Cache: skip (profile, tender) pairs that already have a complete match
   // (i.e. have an ai_reason). Matches missing ai_reason get re-evaluated.
-  // Batch the query to avoid hitting PostgREST URL length limits with 3000+ IDs
+  // Batch the query to avoid hitting PostgREST URL length limits with 3000+ IDs.
   const profileIds = profiles.map(p => p.id)
   const tenderIds = tenders.map(t => t.id)
   const seen = new Set<string>()
@@ -340,7 +219,6 @@ export async function matchNewTenders(
       .in('profile_id', profileIds)
       .in('tender_id', batch)
     for (const r of existing || []) {
-      // Only skip if ai_reason is already populated
       if (r.ai_reason) seen.add(`${r.profile_id}::${r.tender_id}`)
     }
   }
@@ -351,112 +229,28 @@ export async function matchNewTenders(
   const followedByUser = await fetchFollowedTitlesByUser(supabase, userIds)
   const dismissedByUser = await fetchDismissedTitlesByUser(supabase, userIds)
 
-  // Stage 1: cheap candidate generation
-  const candidatesByProfile = new Map<string, RerankCandidate[]>()
-  let totalPairs = 0
-  let skippedCache = 0
-  let belowThreshold = 0
-  const scoreDistribution: Record<string, number> = { '0': 0, '1-9': 0, '10-19': 0, '20-29': 0, '30-39': 0, '40+': 0 }
-
-  for (const tender of tenders) {
-    for (const profile of profiles) {
-      totalPairs++
-      if (seen.has(`${profile.id}::${tender.id}`)) { skippedCache++; continue }
-      const result: ScoreResult = calculateRelevance(
-        {
-          cpv_codes: tender.cpv_codes,
-          title: tender.title,
-          description: tender.description,
-          buyer_country: tender.buyer_country,
-          estimated_value_eur: tender.estimated_value_eur,
-        },
-        {
-          cpv_codes: profile.cpv_codes,
-          keywords: profile.keywords,
-          exclude_keywords: profile.exclude_keywords,
-          countries: profile.countries,
-          min_value_eur: profile.min_value_eur,
-          max_value_eur: profile.max_value_eur,
-        },
-        learnedByUser.get(profile.user_id)
-      )
-
-      // Track score distribution for diagnostics
-      if (result.score === 0) scoreDistribution['0']++
-      else if (result.score < 10) scoreDistribution['1-9']++
-      else if (result.score < 20) scoreDistribution['10-19']++
-      else if (result.score < 30) scoreDistribution['20-29']++
-      else if (result.score < 40) scoreDistribution['30-39']++
-      else scoreDistribution['40+']++
-
-      if (result.score < STAGE1_THRESHOLD) { belowThreshold++; continue }
-
-      const list = candidatesByProfile.get(profile.id) || []
-      list.push({
-        tender_id: tender.id,
-        profile_id: profile.id,
-        user_id: profile.user_id,
-        stage1_score: result.score,
-        matched_cpv: result.matched_cpv,
-        matched_keywords: result.matched_keywords,
-        tender: {
-          id: tender.id,
-          title: tender.title,
-          description: tender.description,
-          buyer_name: tender.buyer_name,
-          buyer_country: tender.buyer_country,
-          cpv_codes: tender.cpv_codes,
-        },
-      })
-      candidatesByProfile.set(profile.id, list)
-    }
-  }
-
-  const totalStage1Pass = [...candidatesByProfile.values()].reduce((s, c) => s + c.length, 0)
-  console.log('[matching] Stage 1 diagnostics:', {
-    totalTenders: tenders.length,
-    totalProfiles: profiles.length,
-    totalPairs,
-    skippedCache,
-    belowThreshold,
-    passedStage1: totalStage1Pass,
-    scoreDistribution,
+  // Normalise tenders once (profile loop filters which ones are seen).
+  const tenderShape = (t: typeof tenders[number]): MatchingTender => ({
+    id: t.id,
+    title: t.title,
+    description: t.description,
+    buyer_name: t.buyer_name,
+    buyer_country: t.buyer_country,
+    cpv_codes: t.cpv_codes,
+    estimated_value_eur: t.estimated_value_eur,
   })
-  // Log profile details for debugging
-  for (const profile of profiles) {
-    console.log(`[matching] Profile "${profile.name}":`, {
-      cpv_codes: profile.cpv_codes?.slice(0, 5),
-      keywords: profile.keywords?.slice(0, 8),
-      countries: profile.countries,
-    })
-  }
-  // Log sample tenders for debugging
-  if (tenders.length > 0) {
-    const sample = tenders.slice(0, 3)
-    for (const t of sample) {
-      console.log(`[matching] Sample tender "${t.title.slice(0, 60)}":`, {
-        cpv_codes: t.cpv_codes?.slice(0, 5),
-        buyer_country: t.buyer_country,
-      })
-    }
-  }
 
-  // Stage 2: AI rerank per profile (capped)
   const matches: MatchResult[] = []
-  for (const [profileId, candidates] of candidatesByProfile) {
-    candidates.sort((a, b) => b.stage1_score - a.stage1_score)
-    const topN = candidates.slice(0, AI_FILTER_CAP)
-    console.log(`[matching] Stage 2: profile ${profileId} — ${candidates.length} candidates, sending top ${topN.length} to Claude`)
-    if (topN.length > 0) {
-      console.log(`[matching] Top 5 Stage-1 candidates:`, topN.slice(0, 5).map(c => ({
-        title: c.tender.title.slice(0, 60),
-        score: c.stage1_score,
-        cpv: c.matched_cpv.slice(0, 3),
-        kw: c.matched_keywords.slice(0, 3),
-      })))
-    }
-    const profile = profiles.find(p => p.id === profileId)!
-    const aiScores = await aiRerank(
+
+  for (const profile of profiles) {
+    // Filter tenders not already cached for this profile.
+    const candidates = tenders
+      .filter(t => !seen.has(`${profile.id}::${t.id}`))
+      .map(tenderShape)
+
+    if (candidates.length === 0) continue
+
+    const results = await scoreAndRerank(
       {
         id: profile.id,
         name: profile.name,
@@ -464,26 +258,35 @@ export async function matchNewTenders(
         keywords: profile.keywords || [],
         cpv_codes: profile.cpv_codes || [],
         exclude_keywords: profile.exclude_keywords || [],
+        countries: profile.countries || [],
+        min_value_eur: profile.min_value_eur,
+        max_value_eur: profile.max_value_eur,
+      },
+      candidates,
+      {
         followedTitles: followedByUser.get(profile.user_id) || [],
         dismissedTitles: dismissedByUser.get(profile.user_id) || [],
-      },
-      topN
+        learnedSignals: learnedByUser.get(profile.user_id),
+        stage1Threshold: STAGE1_THRESHOLD,
+        stage1Cap: AI_FILTER_CAP,
+        aiBatchSize: AI_BATCH_SIZE,
+        aiScoreThreshold: 5,
+      }
     )
-    console.log(`[matching] Claude rerank returned ${aiScores.size} accepted tenders`)
-    for (const c of topN) {
-      const ai = aiScores.get(c.tender_id)
-      if (ai === undefined) continue
-      // 80% AI (0-10 scale × 8) + 20% Stage-1 (0-100 scale × 0.2)
-      // Claude's judgment dominates — Stage 1 is just a tiebreaker
-      const blended = Math.min(100, Math.round(ai.score * 8 + c.stage1_score * 0.2))
+
+    console.log(
+      `[matching] Profile "${profile.name}" → ${results.length} matches from ${candidates.length} candidates`
+    )
+
+    for (const r of results) {
       matches.push({
-        tender_id: c.tender_id,
-        profile_id: c.profile_id,
-        user_id: c.user_id,
-        relevance_score: blended,
-        matched_cpv: c.matched_cpv,
-        matched_keywords: c.matched_keywords,
-        ai_reason: ai.why || `Matched on ${c.matched_cpv.length > 0 ? 'CPV ' + c.matched_cpv.slice(0, 2).join(', ') : ''}${c.matched_cpv.length > 0 && c.matched_keywords.length > 0 ? ' + ' : ''}${c.matched_keywords.length > 0 ? 'keywords: ' + c.matched_keywords.slice(0, 3).join(', ') : ''}`.trim() || null,
+        tender_id: r.tender.id,
+        profile_id: profile.id,
+        user_id: profile.user_id,
+        relevance_score: r.blended_score,
+        matched_cpv: r.matched_cpv,
+        matched_keywords: r.matched_keywords,
+        ai_reason: r.ai_reason,
       })
     }
   }
