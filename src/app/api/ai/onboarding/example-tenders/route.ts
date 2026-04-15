@@ -198,7 +198,7 @@ export async function POST(request: NextRequest) {
 
   const parsed = rawNotices.map(parseTender)
 
-  // ── Step 3: Ingest into tenders table ─────────────────────────────
+  // ── Step 3: Ingest TED candidates into tenders table ──────────────
   // Best-effort: allows the backfill route to reference these later.
   const supabase = getServiceClient()
   if (parsed.length > 0) {
@@ -213,7 +213,7 @@ export async function POST(request: NextRequest) {
       estimated_value_eur: t.estimated_value_eur,
       publication_date: t.publicationDate || new Date().toISOString().split('T')[0],
       ted_url: t.tedUrl,
-      notice_type: t.noticeType,
+      tender_type: t.noticeType,
     }))
     try {
       await supabase.from('tenders').upsert(rows, { onConflict: 'source,external_id' })
@@ -222,7 +222,68 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  if (parsed.length === 0) {
+  // ── Step 3b: Pull tenders the cron has already ingested ───────────
+  // TED's free-text search returns at most 20 results per query, so it
+  // misses many genuinely-relevant tenders that the daily cron has
+  // ingested over weeks. Reading from the `tenders` table gives the
+  // wizard the same candidate pool that powers the live feed for
+  // existing users — including local-language tenders that an English
+  // free-text query wouldn't surface.
+  const dbSinceDate = new Date()
+  dbSinceDate.setDate(dbSinceDate.getDate() - 90)
+  const dbSinceStr = dbSinceDate.toISOString().split('T')[0]
+
+  const dbCandidates: MatchingTender[] = []
+  // Extras keyed by tender id — needed for response mapping to recover
+  // buyerName / tedUrl / publicationDate without an extra round-trip.
+  const dbExtras = new Map<string, { buyerName: string | null; tedUrl: string | null; noticeType: string | null; publicationDate: string | null }>()
+  // External IDs already covered by the TED fetch above; skip them when
+  // pulling from DB to avoid duplicate scoring.
+  const tedExternalIds = new Set(parsed.map(p => p.externalId))
+  const seenDbExternalIds = new Set<string>()
+
+  // Paginate through the tenders table (Supabase caps at 1000 per page).
+  // Capped at 5000 rows max to keep wizard latency bounded.
+  const MAX_DB_PAGES = 5
+  const PAGE_SIZE = 1000
+  for (let page = 0; page < MAX_DB_PAGES; page++) {
+    const { data, error } = await supabase
+      .from('tenders')
+      .select('id, external_id, title, description, buyer_name, buyer_country, cpv_codes, estimated_value_eur, ted_url, tender_type, publication_date')
+      .gte('publication_date', dbSinceStr)
+      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
+    if (error || !data || data.length === 0) break
+    for (const row of data) {
+      if (tedExternalIds.has(row.external_id)) continue
+      if (seenDbExternalIds.has(row.external_id)) continue
+      seenDbExternalIds.add(row.external_id)
+      dbCandidates.push({
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        buyer_name: row.buyer_name,
+        buyer_country: row.buyer_country,
+        cpv_codes: row.cpv_codes || [],
+        estimated_value_eur: row.estimated_value_eur,
+      })
+      dbExtras.set(row.id, {
+        buyerName: row.buyer_name,
+        tedUrl: row.ted_url,
+        noticeType: row.tender_type,
+        publicationDate: row.publication_date,
+      })
+    }
+    if (data.length < PAGE_SIZE) break
+  }
+  console.log(`[example-tenders] DB candidates: ${dbCandidates.length} (TED added ${parsed.length})`)
+
+
+  // Combined candidate pool: live TED results + previously-ingested
+  // tenders from the DB. Stage 1 filters down via CPV/keyword scoring
+  // before Claude sees anything, so a wide pool is cheap.
+  const candidates: MatchingTender[] = [...parsed, ...dbCandidates]
+
+  if (candidates.length === 0) {
     return NextResponse.json({
       tenders: [],
       noMatches: true,
@@ -240,7 +301,6 @@ export async function POST(request: NextRequest) {
   // bullseye matches (9-10) AND topic-overlap-but-not-core matches
   // (5-6). The user needs both — likes refine the profile, dislikes
   // teach Claude what to filter out when the final profile is generated.
-  const candidates: MatchingTender[] = parsed
 
   // Need at least this many STRONG matches (ai_score >= 7) for the wizard
   // to feel useful. Below this, we ask the user to refine their description.
@@ -266,20 +326,22 @@ export async function POST(request: NextRequest) {
   )
 
   // Map to camelCase for the wizard Tender interface, and use the 0-10 AI
-  // score for the relevance badge (wizard shows "X/10").
+  // score for the relevance badge (wizard shows "X/10"). Extras (buyer
+  // name, ted url, etc.) come from either the TED fetch or the DB lookup.
   const results = scored.map(m => {
-    const raw = parsed.find(p => p.id === m.tender.id)!
+    const fromTed = parsed.find(p => p.id === m.tender.id)
+    const fromDb = dbExtras.get(m.tender.id)
     return {
       id: m.tender.id,
       title: m.tender.title,
-      buyerName: raw.buyerName,
+      buyerName: fromTed?.buyerName ?? fromDb?.buyerName ?? null,
       buyerCountry: m.tender.buyer_country,
       cpvCodes: m.tender.cpv_codes,
       estimatedValue: m.tender.estimated_value_eur,
       description: m.tender.description,
-      tedUrl: raw.tedUrl,
-      noticeType: raw.noticeType,
-      publicationDate: raw.publicationDate,
+      tedUrl: fromTed?.tedUrl ?? fromDb?.tedUrl ?? null,
+      noticeType: fromTed?.noticeType ?? fromDb?.noticeType ?? null,
+      publicationDate: fromTed?.publicationDate ?? fromDb?.publicationDate ?? null,
       relevanceScore: m.ai_score ?? Math.round(m.blended_score / 10),
       relevanceReason: m.ai_reason,
     }
