@@ -21,13 +21,40 @@ export async function GET(request: NextRequest) {
   const since = new Date()
   since.setDate(since.getDate() - 1)
 
+  // Collect the union of keywords and CPV codes across all active monitoring profiles.
+  // These are pushed into the TED Search API query so TED's multilingual full-text index
+  // does the matching. TED's index covers titles and descriptions across all EU languages
+  // natively — English keywords therefore match notices written in French, German, etc.
+  // This fixes the long-standing issue of 0 keyword-only hits caused by local matching
+  // running against native-language text.
+  const { data: profiles } = await supabase
+    .from('monitoring_profiles')
+    .select('keywords, cpv_codes')
+    .eq('active', true)
+
+  const profileRows = (profiles ?? []) as Array<{ keywords: string[] | null; cpv_codes: string[] | null }>
+  const allKeywords = [...new Set(profileRows.flatMap(p => p.keywords ?? []))] as string[]
+  const allCpvCodes = [...new Set(profileRows.flatMap(p => p.cpv_codes ?? []))] as string[]
+
+  console.log(
+    `[ingest] Building TED query with ${allCpvCodes.length} CPV codes and ${allKeywords.length} keywords from active profiles`
+  )
+
   let totalIngested = 0
   let page = 1
   let hasMore = true
 
   try {
     while (hasMore) {
-      const response = await tedClient.fetchRecentContractNotices(since, page)
+      // TED's full-text index is multilingual — English keywords match native-language
+      // notices across all EU languages. Using fetchRecentNoticesFiltered pushes CPV
+      // codes and profile keywords into the TED query itself rather than filtering
+      // locally after ingestion (which failed because notices are in native languages).
+      const response = await tedClient.fetchRecentNoticesFiltered(
+        since,
+        { cpvCodes: allCpvCodes, keywords: allKeywords },
+        page
+      )
 
       if (!response.notices || response.notices.length === 0) {
         hasMore = false
@@ -72,7 +99,13 @@ export async function GET(request: NextRequest) {
       page++
     }
 
-    return NextResponse.json({ success: true, ingested: totalIngested, pages: page - 1 })
+    return NextResponse.json({
+      success: true,
+      ingested: totalIngested,
+      pages: page - 1,
+      query_cpv_codes: allCpvCodes.length,
+      query_keywords: allKeywords.length,
+    })
   } catch (error) {
     console.error('TED ingestion error:', error)
     return NextResponse.json({ error: 'Ingestion failed' }, { status: 500 })
