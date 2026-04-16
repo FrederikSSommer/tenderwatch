@@ -42,7 +42,6 @@ Provide a summary in this exact format:
 - VALUE: Estimated contract value and duration if stated
 - REQUIREMENTS: Key eligibility or qualification requirements (2-3 bullet points)
 - DEADLINE: Submission deadline and any important dates
-- FIT FOR SME: One sentence assessment of whether this is accessible for a small company
 
 Keep the total summary under 150 words. Use plain language.`,
       },
