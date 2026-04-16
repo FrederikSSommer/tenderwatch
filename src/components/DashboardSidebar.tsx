@@ -13,6 +13,7 @@ import {
   LogOut,
   Zap,
   Rss,
+  X,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 
@@ -28,10 +29,12 @@ export function DashboardSidebar({
   userEmail,
   plan,
   isDemo = false,
+  onClose,
 }: {
   userEmail: string
   plan: string
   isDemo?: boolean
+  onClose?: () => void
 }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -54,10 +57,19 @@ export function DashboardSidebar({
 
   return (
     <div className="flex w-64 flex-col border-r border-gray-200 bg-white">
-      <div className="flex h-16 items-center px-6 border-b border-gray-200">
+      <div className="flex h-16 items-center justify-between px-6 border-b border-gray-200">
         <Link href="/" className="text-xl font-bold text-gray-900">
           TenderWatch
         </Link>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 lg:hidden"
+            aria-label="Close navigation"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
       <nav className="flex-1 space-y-1 px-3 py-4">

@@ -17,6 +17,12 @@ export const metadata: Metadata = {
   description: "Monitor EU and Danish public procurement tenders with AI-powered summaries. Find relevant tenders, get daily alerts. From 299 DKK/month.",
 };
 
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
