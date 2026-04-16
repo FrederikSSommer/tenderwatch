@@ -29,11 +29,13 @@ export function buildTEDQuery(
   }
 
   if (keywords.length > 0) {
-    // Strip embedded quotes to avoid breaking query syntax
+    // Strip embedded quotes to avoid breaking query syntax.
+    // Only wrap in inner parens when combined with CPVs so the OR groups are
+    // unambiguous; when keywords is the only filter the outer parens suffice.
     const kwPart = keywords
       .map(kw => `"${kw.replace(/"/g, '')}"`)
       .join(' OR ')
-    parts.push(`(${kwPart})`)
+    parts.push(cpvCodes.length > 0 ? `(${kwPart})` : kwPart)
   }
 
   const datePart = `PD>=${dateStr}`
