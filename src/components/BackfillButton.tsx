@@ -144,20 +144,22 @@ export function BackfillButton({ compact = false }: { compact?: boolean }) {
         </div>
       </div>
 
-      <div className={`flex items-center gap-3 ${noticeId.trim() ? 'opacity-40 pointer-events-none' : ''}`}>
-        <label className="text-sm font-medium text-gray-700">Go back:</label>
-        <select
-          value={days}
-          onChange={(e) => setDays(Number(e.target.value))}
-          disabled={loading}
-          className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
-        >
-          {PERIOD_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+      <div className="flex items-center gap-3">
+        <div className={`flex items-center gap-3 ${noticeId.trim() ? 'opacity-40 pointer-events-none' : ''}`}>
+          <label className="text-sm font-medium text-gray-700">Go back:</label>
+          <select
+            value={days}
+            onChange={(e) => setDays(Number(e.target.value))}
+            disabled={loading}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+          >
+            {PERIOD_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <button
           onClick={handleBackfill}
           disabled={loading}
