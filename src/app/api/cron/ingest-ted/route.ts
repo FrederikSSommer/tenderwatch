@@ -11,6 +11,46 @@ function getServiceClient() {
   )
 }
 
+type ServiceClient = ReturnType<typeof getServiceClient>
+
+async function ingestNotices(
+  supabase: ServiceClient,
+  notices: Record<string, unknown>[]
+): Promise<number> {
+  const parsed = notices
+    .map(parseTEDNotice)
+    .filter((t): t is NonNullable<typeof t> => t !== null)
+  if (parsed.length === 0) return 0
+
+  const { error } = await supabase
+    .from('tenders')
+    .upsert(
+      parsed.map(t => ({
+        source: t.source as 'ted',
+        external_id: t.external_id,
+        title: t.title,
+        description: t.description,
+        buyer_name: t.buyer_name,
+        buyer_country: t.buyer_country,
+        cpv_codes: t.cpv_codes,
+        procedure_type: t.procedure_type,
+        tender_type: t.tender_type,
+        estimated_value_eur: t.estimated_value_eur,
+        currency: t.currency,
+        submission_deadline: t.submission_deadline,
+        publication_date: t.publication_date,
+        document_url: t.document_url,
+        ted_url: t.ted_url,
+        language: t.language,
+        raw_data: t.raw_data,
+      })),
+      { onConflict: 'source,external_id' }
+    )
+
+  if (error) console.error('Upsert error:', error)
+  return parsed.length
+}
+
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -43,13 +83,10 @@ export async function GET(request: NextRequest) {
   let totalIngested = 0
   let page = 1
   let hasMore = true
+  let usedFallback = false
 
   try {
     while (hasMore) {
-      // TED's full-text index is multilingual — English keywords match native-language
-      // notices across all EU languages. Using fetchRecentNoticesFiltered pushes CPV
-      // codes and profile keywords into the TED query itself rather than filtering
-      // locally after ingestion (which failed because notices are in native languages).
       const response = await tedClient.fetchRecentNoticesFiltered(
         since,
         { cpvCodes: allCpvCodes, keywords: allKeywords },
@@ -61,42 +98,29 @@ export async function GET(request: NextRequest) {
         break
       }
 
-      const parsed = response.notices
-        .map(parseTEDNotice)
-        .filter((t): t is NonNullable<typeof t> => t !== null)
-
-      if (parsed.length > 0) {
-        const { error } = await supabase
-          .from('tenders')
-          .upsert(
-            parsed.map(t => ({
-              source: t.source as 'ted',
-              external_id: t.external_id,
-              title: t.title,
-              description: t.description,
-              buyer_name: t.buyer_name,
-              buyer_country: t.buyer_country,
-              cpv_codes: t.cpv_codes,
-              procedure_type: t.procedure_type,
-              tender_type: t.tender_type,
-              estimated_value_eur: t.estimated_value_eur,
-              currency: t.currency,
-              submission_deadline: t.submission_deadline,
-              publication_date: t.publication_date,
-              document_url: t.document_url,
-              ted_url: t.ted_url,
-              language: t.language,
-              raw_data: t.raw_data,
-            })),
-            { onConflict: 'source,external_id' }
-          )
-
-        if (error) console.error('Upsert error:', error)
-        totalIngested += parsed.length
-      }
-
+      totalIngested += await ingestNotices(supabase, response.notices)
       hasMore = response.notices.length === 100
       page++
+    }
+
+    // If the filtered query returned nothing (possible when TED's query syntax
+    // doesn't match the stored CPV/keyword format), fall back to a date-only
+    // query so the matching pipeline always has fresh tenders to work with.
+    if (totalIngested === 0 && (allCpvCodes.length > 0 || allKeywords.length > 0)) {
+      console.log('[ingest] Filtered query returned 0 results; falling back to date-only query')
+      usedFallback = true
+      page = 1
+      hasMore = true
+      while (hasMore) {
+        const response = await tedClient.fetchRecentContractNotices(since, page)
+        if (!response.notices || response.notices.length === 0) {
+          hasMore = false
+          break
+        }
+        totalIngested += await ingestNotices(supabase, response.notices)
+        hasMore = response.notices.length === 100
+        page++
+      }
     }
 
     return NextResponse.json({
@@ -105,6 +129,7 @@ export async function GET(request: NextRequest) {
       pages: page - 1,
       query_cpv_codes: allCpvCodes.length,
       query_keywords: allKeywords.length,
+      fallback: usedFallback,
     })
   } catch (error) {
     console.error('TED ingestion error:', error)

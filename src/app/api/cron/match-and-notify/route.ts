@@ -105,9 +105,10 @@ export async function GET(request: NextRequest) {
 
       if (!tenders) continue
 
-      const digestTenders = finalMatchList.map(m => {
-        const tender = tenders.find(t => t.id === m.tender_id)!
-        return {
+      const digestTenders = finalMatchList.flatMap(m => {
+        const tender = tenders.find(t => t.id === m.tender_id)
+        if (!tender) return []
+        return [{
           id: tender.id,
           title: tender.title,
           buyer_name: tender.buyer_name,
@@ -117,8 +118,10 @@ export async function GET(request: NextRequest) {
           relevance_score: m.relevance_score,
           cpv_codes: tender.cpv_codes,
           ai_reason: m.ai_reason,
-        }
+        }]
       }).sort((a, b) => b.relevance_score - a.relevance_score)
+
+      if (digestTenders.length === 0) continue
 
       try {
         await sendDailyDigest({
