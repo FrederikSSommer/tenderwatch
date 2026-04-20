@@ -3,29 +3,53 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { TenderCard } from '@/components/TenderCard'
 import { FeedFilters } from '@/components/FeedFilters'
 
+function formatDateHeading(dateStr: string): string {
+  try {
+    const d = new Date(dateStr + 'T00:00:00Z')
+    return d.toLocaleDateString('en-GB', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'UTC',
+    })
+  } catch {
+    return dateStr
+  }
+}
+
+function DateDivider({ date }: { date: string }) {
+  return (
+    <div className="flex items-center gap-3 py-1">
+      <div className="h-px flex-1 bg-gray-200" />
+      <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+        {formatDateHeading(date)}
+      </span>
+      <div className="h-px flex-1 bg-gray-200" />
+    </div>
+  )
+}
+
 export default async function FeedPage({
   searchParams,
 }: {
-  searchParams: Promise<{ profile?: string; country?: string; sort?: string; q?: string }>
+  searchParams: Promise<{ profile?: string; sort?: string }>
 }) {
   const params = await searchParams
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
 
-  // Get user's profiles
+  const sort = params.sort === 'date' ? 'date' : 'relevance'
+
   const { data: profiles } = await supabase
     .from('monitoring_profiles')
     .select('*')
     .eq('user_id', user.id)
 
-  // Build query for matched tenders
   let query = supabase
     .from('matches')
-    .select(`
-      *,
-      tender:tenders(*)
-    `)
+    .select(`*, tender:tenders(*)`)
     .eq('user_id', user.id)
     .eq('dismissed', false)
     .order('relevance_score', { ascending: false })
@@ -35,14 +59,43 @@ export default async function FeedPage({
     query = query.eq('profile_id', params.profile)
   }
 
-  const { data: matches } = await query
+  const { data: rawMatches } = await query
+
+  // For date sort, re-sort by publication_date descending
+  const matches = rawMatches
+    ? sort === 'date'
+      ? [...rawMatches].sort((a, b) => {
+          const da = (a.tender as any)?.publication_date ?? ''
+          const db = (b.tender as any)?.publication_date ?? ''
+          return db.localeCompare(da)
+        })
+      : rawMatches
+    : []
+
+  // Group consecutive matches by date for the date-sorted view
+  type Match = NonNullable<typeof rawMatches>[number]
+  function groupByDate(items: Match[]): { date: string; items: Match[] }[] {
+    const groups: { date: string; items: Match[] }[] = []
+    for (const m of items) {
+      const date = (m.tender as any)?.publication_date ?? 'Unknown'
+      const last = groups[groups.length - 1]
+      if (last?.date === date) {
+        last.items.push(m)
+      } else {
+        groups.push({ date, items: [m] })
+      }
+    }
+    return groups
+  }
 
   return (
     <div className="p-6">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Tender Feed</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Tenders matching your monitoring profiles, ranked by relevance
+          {sort === 'date'
+            ? 'Tenders matching your profiles, sorted by publication date'
+            : 'Tenders matching your monitoring profiles, ranked by relevance'}
         </p>
       </div>
 
@@ -51,20 +104,43 @@ export default async function FeedPage({
       </Suspense>
 
       <div className="mt-6 space-y-3">
-        {matches && matches.length > 0 ? (
-          matches.map((match: any) => (
-            <TenderCard
-              key={match.id}
-              tender={match.tender}
-              relevanceScore={match.relevance_score}
-              matchedCpv={match.matched_cpv}
-              matchedKeywords={match.matched_keywords}
-              bookmarked={match.bookmarked}
-              dismissed={match.dismissed}
-              matchId={match.id}
-              aiReason={match.ai_reason}
-            />
-          ))
+        {matches.length > 0 ? (
+          sort === 'date' ? (
+            groupByDate(matches).map((group) => (
+              <div key={group.date}>
+                <DateDivider date={group.date} />
+                <div className="space-y-3 mt-3">
+                  {group.items.map((match: any) => (
+                    <TenderCard
+                      key={match.id}
+                      tender={match.tender}
+                      relevanceScore={match.relevance_score}
+                      matchedCpv={match.matched_cpv}
+                      matchedKeywords={match.matched_keywords}
+                      bookmarked={match.bookmarked}
+                      dismissed={match.dismissed}
+                      matchId={match.id}
+                      aiReason={match.ai_reason}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))
+          ) : (
+            matches.map((match: any) => (
+              <TenderCard
+                key={match.id}
+                tender={match.tender}
+                relevanceScore={match.relevance_score}
+                matchedCpv={match.matched_cpv}
+                matchedKeywords={match.matched_keywords}
+                bookmarked={match.bookmarked}
+                dismissed={match.dismissed}
+                matchId={match.id}
+                aiReason={match.ai_reason}
+              />
+            ))
+          )
         ) : (
           <div className="text-center py-16">
             <LayoutDashboardIcon />
