@@ -61,16 +61,15 @@ export default async function FeedPage({
 
   const { data: rawMatches } = await query
 
-  // For date sort, re-sort by publication_date descending
-  const matches = rawMatches
-    ? sort === 'date'
-      ? [...rawMatches].sort((a, b) => {
+  const allMatches = rawMatches ?? []
+  const matches =
+    sort === 'date'
+      ? [...allMatches].sort((a, b) => {
           const da = (a.tender as any)?.publication_date ?? ''
           const db = (b.tender as any)?.publication_date ?? ''
           return db.localeCompare(da)
         })
-      : rawMatches
-    : []
+      : allMatches
 
   // Group consecutive matches by date for the date-sorted view
   type Match = NonNullable<typeof rawMatches>[number]
