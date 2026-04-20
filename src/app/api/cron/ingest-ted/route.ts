@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { tedClient } from '@/lib/ted/client'
 import { parseTEDNotice } from '@/lib/ted/parser'
+import { ingestRecentHilmaNotices } from '@/lib/hilma/ingest'
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/supabase/types'
 
@@ -72,10 +73,16 @@ export async function GET(request: NextRequest) {
       page++
     }
 
+    // Run HILMA ingest in parallel (no-op if HILMA_API_KEY not set)
+    const hilma = await ingestRecentHilmaNotices(supabase, since, { maxPages: 20 })
+    if (hilma.errors.length > 0) console.error('HILMA ingest errors:', hilma.errors)
+
     return NextResponse.json({
       success: true,
-      ingested: totalIngested,
-      pages: page - 1,
+      ted: { ingested: totalIngested, pages: page - 1 },
+      hilma: hilma.skipped
+        ? { skipped: true }
+        : { ingested: hilma.ingested, pages: hilma.pages, errors: hilma.errors },
     })
   } catch (error) {
     console.error('TED ingestion error:', error)

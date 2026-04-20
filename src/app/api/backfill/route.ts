@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/supabase/types'
 import { ingestRecentTenders } from '@/lib/ted/ingest'
+import { ingestRecentHilmaNotices } from '@/lib/hilma/ingest'
 import { matchNewTenders } from '@/lib/matching/engine'
 import { scoreAndRerank } from '@/lib/matching/core'
 
@@ -273,7 +274,15 @@ export async function POST(request: NextRequest) {
 
   let ingest = { ingested: 0, pages: 0, errors: [] as string[] }
   if (force || (count ?? 0) < 50) {
-    ingest = await ingestRecentTenders(serviceClient, since, { maxPages: 30 })
+    const [ted, hilma] = await Promise.all([
+      ingestRecentTenders(serviceClient, since, { maxPages: 30 }),
+      ingestRecentHilmaNotices(serviceClient, since, { maxPages: 20 }),
+    ])
+    ingest = {
+      ingested: ted.ingested + (hilma.skipped ? 0 : hilma.ingested),
+      pages: ted.pages,
+      errors: [...ted.errors, ...(hilma.skipped ? [] : hilma.errors)],
+    }
   }
 
   // Score all user profiles against the shared pool
