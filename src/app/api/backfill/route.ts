@@ -132,7 +132,7 @@ export async function POST(request: NextRequest) {
           cpv_codes: tenderRow.cpv_codes || [],
           estimated_value_eur: tenderRow.estimated_value_eur,
         }],
-        { stage1Threshold: 1, aiScoreThreshold: 1 }
+        { stage1Threshold: 1, aiScoreThreshold: 5 }
       )
 
       if (results.length > 0) {

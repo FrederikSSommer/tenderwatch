@@ -53,7 +53,7 @@ export default async function FeedPage({
     .eq('user_id', user.id)
     .eq('dismissed', false)
     .order('relevance_score', { ascending: false })
-    .limit(50)
+    .limit(200)
 
   if (params.profile) {
     query = query.eq('profile_id', params.profile)
