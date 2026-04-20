@@ -39,6 +39,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}))
   const days = Math.min(Math.max(Number(body.days) || 7, 1), MAX_DAYS)
   const profileId: string | undefined = body.profileId
+  const force: boolean = body.force === true
 
   const since = new Date()
   since.setDate(since.getDate() - days)
@@ -158,7 +159,7 @@ export async function POST(request: NextRequest) {
     .gte('publication_date', sinceStr)
 
   let ingest = { ingested: 0, pages: 0, errors: [] as string[] }
-  if ((count ?? 0) < 50) {
+  if (force || (count ?? 0) < 50) {
     ingest = await ingestRecentTenders(serviceClient, since, { maxPages: 30 })
   }
 

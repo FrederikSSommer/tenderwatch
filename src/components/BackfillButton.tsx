@@ -26,6 +26,7 @@ interface BackfillResult {
 export function BackfillButton({ compact = false }: { compact?: boolean }) {
   const router = useRouter()
   const [days, setDays] = useState(30)
+  const [force, setForce] = useState(false)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<BackfillResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -39,7 +40,7 @@ export function BackfillButton({ compact = false }: { compact?: boolean }) {
       const response = await fetch('/api/backfill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days }),
+        body: JSON.stringify({ days, force }),
       })
 
       const data = await response.json()
@@ -153,6 +154,17 @@ export function BackfillButton({ compact = false }: { compact?: boolean }) {
           )}
         </button>
       </div>
+
+      <label className="mt-3 flex items-center gap-2 text-sm text-gray-500 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={force}
+          onChange={(e) => setForce(e.target.checked)}
+          disabled={loading}
+          className="rounded"
+        />
+        Re-fetch from TED even if already cached
+      </label>
 
       {loading && (
         <p className="mt-3 text-sm text-gray-500">
