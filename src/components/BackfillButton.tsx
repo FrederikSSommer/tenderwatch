@@ -16,17 +16,19 @@ interface BackfillResult {
   success: boolean
   ingested: number
   matched: number
-  days: number
+  days?: number
   tenders_in_period?: number
   error?: string
   errors?: string[]
   message?: string
+  notice?: { id: string; title: string; cpv_codes: string[] }
 }
 
 export function BackfillButton({ compact = false }: { compact?: boolean }) {
   const router = useRouter()
   const [days, setDays] = useState(30)
   const [force, setForce] = useState(false)
+  const [noticeId, setNoticeId] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<BackfillResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -37,10 +39,13 @@ export function BackfillButton({ compact = false }: { compact?: boolean }) {
     setError(null)
 
     try {
+      const body = noticeId.trim()
+        ? { noticeId: noticeId.trim() }
+        : { days, force }
       const response = await fetch('/api/backfill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days, force }),
+        body: JSON.stringify(body),
       })
 
       const data = await response.json()
@@ -122,7 +127,24 @@ export function BackfillButton({ compact = false }: { compact?: boolean }) {
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="mb-4">
+        <label className="text-sm font-medium text-gray-700 block mb-1">
+          Fetch a specific notice (optional)
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={noticeId}
+            onChange={(e) => setNoticeId(e.target.value)}
+            placeholder="e.g. 267700-2026"
+            disabled={loading}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50 w-44 font-mono"
+          />
+          <span className="text-xs text-gray-400">paste the notice number from the TED URL</span>
+        </div>
+      </div>
+
+      <div className={`flex items-center gap-3 ${noticeId.trim() ? 'opacity-40 pointer-events-none' : ''}`}>
         <label className="text-sm font-medium text-gray-700">Go back:</label>
         <select
           value={days}
@@ -179,12 +201,22 @@ export function BackfillButton({ compact = false }: { compact?: boolean }) {
             <p className="font-medium text-green-800">Backfill complete</p>
           </div>
           <ul className="mt-2 text-sm text-green-700 space-y-1">
-            <li>Searched the past {result.days} days</li>
-            <li>{result.ingested} tenders fetched from TED</li>
-            {result.tenders_in_period !== undefined && (
-              <li>{result.tenders_in_period} total tenders in this period</li>
+            {result.notice ? (
+              <>
+                <li>Notice: <strong>{result.notice.title}</strong></li>
+                <li>CPV: {result.notice.cpv_codes.join(', ') || 'none'}</li>
+                <li><strong>{result.matched > 0 ? `Matched your profile` : 'Not matched by any profile'}</strong></li>
+              </>
+            ) : (
+              <>
+                <li>Searched the past {result.days} days</li>
+                <li>{result.ingested} tenders fetched from TED</li>
+                {result.tenders_in_period !== undefined && (
+                  <li>{result.tenders_in_period} total tenders in this period</li>
+                )}
+                <li><strong>{result.matched} tenders matched</strong> your profiles</li>
+              </>
             )}
-            <li><strong>{result.matched} tenders matched</strong> your profiles</li>
           </ul>
           {result.message && (
             <p className="mt-2 text-sm text-green-600">{result.message}</p>
