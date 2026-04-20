@@ -10,21 +10,16 @@ export interface IngestResult {
 }
 
 /**
- * Broad TED ingestion — pulls recent contract notices into the shared
+ * Broad TED ingestion — pulls all recent contract notices into the shared
  * `tenders` table. Used by both the daily cron and the manual backfill.
  *
  * No per-user filtering. The same tender pool is then scored against any
- * profile that asks.
- *
- * Accepts optional `cpvCodes` and `keywords` to focus the TED query.
- * TED's full-text index is multilingual — English keywords match notices
- * written in any EU language, so pushing keywords into the query fixes the
- * zero-hit problem caused by local matching against native-language text.
+ * profile that asks. All filtering happens in the matching engine.
  */
 export async function ingestRecentTenders(
   supabase: SupabaseClient<Database>,
   since: Date,
-  opts: { maxPages?: number; cpvCodes?: string[]; keywords?: string[] } = {}
+  opts: { maxPages?: number } = {}
 ): Promise<IngestResult> {
   const maxPages = opts.maxPages ?? 20
   const errors: string[] = []
@@ -34,11 +29,7 @@ export async function ingestRecentTenders(
 
   while (hasMore && page <= maxPages) {
     try {
-      const response = await tedClient.fetchRecentNoticesFiltered(
-        since,
-        { cpvCodes: opts.cpvCodes ?? [], keywords: opts.keywords ?? [] },
-        page
-      )
+      const response = await tedClient.fetchRecentContractNotices(since, page)
       if (!response.notices || response.notices.length === 0) {
         hasMore = false
         break

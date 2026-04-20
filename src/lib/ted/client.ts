@@ -1,52 +1,5 @@
 const TED_API_BASE = 'https://api.ted.europa.eu/v3'
 
-/**
- * Builds a TED expert-syntax query string.
- *
- * TED's full-text index is multilingual — English keywords match notices written
- * in any EU language because TED normalises terms across languages at index time.
- * This means "patrol vessel" will match French notices about "patrouilleurs" etc.
- *
- * CPV codes and keywords are combined with OR (broad recall), then intersected
- * with a date lower-bound. Falls back to a date-only query if neither is provided.
- *
- * @example
- *   buildTEDQuery('20250101', ['35120000', '34520000'], ['patrol vessel', 'naval surveillance'])
- *   // → '(cpv=[35120000 OR 34520000] OR ("patrol vessel" OR "naval surveillance")) AND PD>=20250101'
- *
- *   buildTEDQuery('20250101', [], [])
- *   // → 'PD>=20250101'  (date-only fallback)
- */
-export function buildTEDQuery(
-  dateStr: string,
-  cpvCodes: string[],
-  keywords: string[]
-): string {
-  const parts: string[] = []
-
-  if (cpvCodes.length > 0) {
-    parts.push(`cpv=[${cpvCodes.join(' OR ')}]`)
-  }
-
-  if (keywords.length > 0) {
-    // Strip embedded quotes to avoid breaking query syntax.
-    // Only wrap in inner parens when combined with CPVs so the OR groups are
-    // unambiguous; when keywords is the only filter the outer parens suffice.
-    const kwPart = keywords
-      .map(kw => `"${kw.replace(/"/g, '')}"`)
-      .join(' OR ')
-    parts.push(cpvCodes.length > 0 ? `(${kwPart})` : kwPart)
-  }
-
-  const datePart = `PD>=${dateStr}`
-
-  if (parts.length === 0) {
-    return datePart
-  }
-
-  return `(${parts.join(' OR ')}) AND ${datePart}`
-}
-
 const TED_FIELDS = [
   'notice-title',
   'description-glo',
@@ -114,21 +67,6 @@ export class TEDClient {
     return this.search(`PD>=${dateStr}`, page, 100)
   }
 
-  /**
-   * Fetch recent notices filtered by CPV codes and/or free-text keywords.
-   * When both are provided they are OR'd together for maximum recall — a tender
-   * is fetched if it matches either signal.
-   * Falls back to a date-only query if neither filter is supplied.
-   */
-  async fetchRecentNoticesFiltered(
-    since: Date,
-    filters: { cpvCodes?: string[]; keywords?: string[] } = {},
-    page = 1
-  ): Promise<TEDSearchResponse> {
-    const dateStr = since.toISOString().split('T')[0].replace(/-/g, '')
-    const query = buildTEDQuery(dateStr, filters.cpvCodes ?? [], filters.keywords ?? [])
-    return this.search(query, page, 100)
-  }
 }
 
 export const tedClient = new TEDClient()
