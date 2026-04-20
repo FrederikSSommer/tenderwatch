@@ -60,23 +60,20 @@ export default async function FeedPage({
   }
 
   const { data: rawMatches } = await query
-
-  const allMatches = rawMatches ?? []
-  const matches =
+  const allMatches: any[] = (rawMatches ?? []) as any[]
+  const matches: any[] =
     sort === 'date'
       ? [...allMatches].sort((a, b) => {
-          const da = (a.tender as any)?.publication_date ?? ''
-          const db = (b.tender as any)?.publication_date ?? ''
+          const da = a?.tender?.publication_date ?? ''
+          const db = b?.tender?.publication_date ?? ''
           return db.localeCompare(da)
         })
       : allMatches
 
-  // Group consecutive matches by date for the date-sorted view
-  type Match = NonNullable<typeof rawMatches>[number]
-  function groupByDate(items: Match[]): { date: string; items: Match[] }[] {
-    const groups: { date: string; items: Match[] }[] = []
+  function groupByDate(items: any[]): { date: string; items: any[] }[] {
+    const groups: { date: string; items: any[] }[] = []
     for (const m of items) {
-      const date = (m.tender as any)?.publication_date ?? 'Unknown'
+      const date = m?.tender?.publication_date ?? 'Unknown'
       const last = groups[groups.length - 1]
       if (last?.date === date) {
         last.items.push(m)
