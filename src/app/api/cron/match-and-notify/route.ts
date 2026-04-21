@@ -105,7 +105,8 @@ export async function GET(request: NextRequest) {
 
       if (!tenders) continue
 
-      const digestTenders = finalMatchList.flatMap(m => {
+      const DIGEST_MIN_SCORE = 60
+      const digestTenders = finalMatchList.filter(m => m.relevance_score >= DIGEST_MIN_SCORE).flatMap(m => {
         const tender = tenders.find(t => t.id === m.tender_id)
         if (!tender) return []
         return [{
