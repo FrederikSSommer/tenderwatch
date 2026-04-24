@@ -170,8 +170,9 @@ Return ONLY a JSON array. Include ONLY entries scoring ${scoreThreshold} or high
       }
     } catch (err) {
       console.error('[core] AI rerank batch failed:', err)
-      // On failure, accept Stage-1 candidates as-is with neutral AI score.
-      for (const c of batch) out.set(c.tender.id, { score: 6, why: null })
+      // On failure, accept Stage-1 candidates with the minimum passing score so
+      // the error path remains consistent with the configured threshold.
+      for (const c of batch) out.set(c.tender.id, { score: scoreThreshold, why: null })
     }
   }
   return out
@@ -200,7 +201,7 @@ export async function scoreAndRerank(
     stage1Threshold = 5,
     stage1Cap = 120,
     aiBatchSize = 30,
-    aiScoreThreshold = 5,
+    aiScoreThreshold = 7,
     maxResults,
   } = options
 
