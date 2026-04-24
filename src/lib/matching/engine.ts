@@ -270,7 +270,7 @@ export async function matchNewTenders(
         stage1Threshold: STAGE1_THRESHOLD,
         stage1Cap: AI_FILTER_CAP,
         aiBatchSize: AI_BATCH_SIZE,
-        aiScoreThreshold: 7,
+        aiScoreThreshold: 8,
       }
     )
 
