@@ -7,7 +7,7 @@ EU public procurement intelligence SaaS. Monitors TED (Tenders Electronic Daily)
 - **Framework**: Next.js 16.2 (App Router), React 19, TypeScript 5
 - **Styling**: Tailwind CSS v4 — automatic dark mode via `prefers-color-scheme` overrides in `globals.css`
 - **Database**: Supabase (Postgres + RLS + Auth)
-- **AI**: Anthropic Claude Sonnet (`claude-sonnet-4-20250514`) via `@anthropic-ai/sdk`
+- **AI**: Anthropic Claude Sonnet (`claude-sonnet-4-6`) via `@anthropic-ai/sdk`
 - **Email**: Resend (`onboarding@resend.dev` for now)
 - **Payments**: Stripe (wired but not enforced yet)
 - **Deploy**: Vercel with cron jobs
