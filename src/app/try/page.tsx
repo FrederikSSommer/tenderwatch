@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 import { OnboardingWizardV2 } from '@/components/OnboardingWizardV2'
 import Link from 'next/link'
 

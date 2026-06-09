@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 import { DEMO_TENDERS, DEMO_MATCHES } from '@/lib/demo-data'
 import { notFound } from 'next/navigation'
 import { formatDate, formatDeadline } from '@/lib/utils/date'

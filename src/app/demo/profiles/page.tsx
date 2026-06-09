@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 import { DEMO_PROFILES } from '@/lib/demo-data'
 import Link from 'next/link'
 import { Target, Plus } from 'lucide-react'

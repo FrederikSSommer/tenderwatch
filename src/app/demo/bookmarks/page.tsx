@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 import { getDemoMatchesWithTenders } from '@/lib/demo-data'
 import { TenderCard } from '@/components/TenderCard'
 import { Bookmark } from 'lucide-react'

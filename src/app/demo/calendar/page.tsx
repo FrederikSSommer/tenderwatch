@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 import { getDemoMatchesWithTenders } from '@/lib/demo-data'
 import { formatDate } from '@/lib/utils/date'
 import { formatEUR } from '@/lib/utils/currency'

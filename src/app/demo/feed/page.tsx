@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 import { Suspense } from 'react'
 import { getDemoMatchesWithTenders, DEMO_PROFILES } from '@/lib/demo-data'
 import { TenderCard } from '@/components/TenderCard'
