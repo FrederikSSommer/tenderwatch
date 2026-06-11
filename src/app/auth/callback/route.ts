@@ -10,6 +10,11 @@ export async function GET(request: Request) {
     const supabase = await createServerSupabaseClient()
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     if (!error) {
+      // Password recovery: forward straight to the reset page so the user can
+      // set a new password — skip the onboarding check below.
+      if (next === '/auth/reset-password') {
+        return NextResponse.redirect(`${origin}${next}`)
+      }
       // Check if user needs onboarding (no monitoring profiles yet)
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
