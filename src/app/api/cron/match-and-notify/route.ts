@@ -32,6 +32,7 @@ export async function GET(request: NextRequest) {
     }
 
     let emailsSent = 0
+    let emailsFailed = 0
     const today = new Date()
     const isMonday = today.getUTCDay() === 1
 
@@ -137,19 +138,31 @@ export async function GET(request: NextRequest) {
           user_id: userId,
           channel: 'email' as const,
           tender_count: digestTenders.length,
+          status: 'sent' as const,
         })
 
+        // Only mark the matches actually included in the email — sub-threshold
+        // matches stay un-notified so the weekly catch-up can still pick them up.
+        const digestTenderIds = digestTenders.map(t => t.id)
         await supabase
           .from('matches')
           .update({ notified: true, notified_at: new Date().toISOString() })
-          .in('tender_id', tenderIds)
+          .in('tender_id', digestTenderIds)
           .eq('user_id', userId)
       } catch (err) {
+        emailsFailed++
         console.error(`Failed to send digest to ${user.email}:`, err)
+        await supabase.from('notifications').insert({
+          user_id: userId,
+          channel: 'email' as const,
+          tender_count: digestTenders.length,
+          status: 'failed' as const,
+          error: err instanceof Error ? err.message : JSON.stringify(err),
+        })
       }
     }
 
-    return NextResponse.json({ success: true, matches: matches.length, emailsSent })
+    return NextResponse.json({ success: true, matches: matches.length, emailsSent, emailsFailed })
   } catch (error) {
     console.error('Match and notify error:', error)
     return NextResponse.json({ error: 'Match and notify failed' }, { status: 500 })

@@ -5,6 +5,9 @@ function getResend() {
 }
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://tenderwatch.dk'
+// Resend's shared onboarding domain only delivers to the account owner's own
+// address — set EMAIL_FROM to an address on a Resend-verified domain in prod.
+const EMAIL_FROM = process.env.EMAIL_FROM || 'TenderWatch <onboarding@resend.dev>'
 
 export interface AlertTender {
   id: string
@@ -137,7 +140,7 @@ export async function sendHighMatchAlert(params: {
     : `⚡ ${count} high-match tenders found`
 
   const { error } = await getResend().emails.send({
-    from: 'TenderWatch <onboarding@resend.dev>',
+    from: EMAIL_FROM,
     to,
     subject,
     html: buildAlertHtml(userName, tenders),

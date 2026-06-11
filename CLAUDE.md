@@ -60,7 +60,7 @@ src/
 
 ## Environment variables
 
-`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `CRON_SECRET`, `NEXT_PUBLIC_APP_URL`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `EMAIL_FROM` (sender on a Resend-verified domain, e.g. `TenderWatch <digest@tenderwatchhq.com>`; falls back to `onboarding@resend.dev`, which only delivers to the Resend account owner), `CRON_SECRET`, `NEXT_PUBLIC_APP_URL`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
 
 ## Conventions
 
@@ -88,6 +88,7 @@ Run in Supabase SQL Editor. Files in `supabase/migrations/`:
 3. `003_profile_description.sql`
 4. `004_matches_dismissed.sql`
 5. `005_email_frequency.sql`
+6. `006_notification_status.sql` — adds `status`/`error` to `notifications` for failed-send visibility
 
 ## Git workflow
 

@@ -259,6 +259,8 @@ export type Database = {
           channel: 'email' | 'push'
           tender_count: number
           sent_at: string
+          status: 'sent' | 'failed'
+          error: string | null
         }
         Insert: {
           id?: string
@@ -266,6 +268,8 @@ export type Database = {
           channel: 'email' | 'push'
           tender_count: number
           sent_at?: string
+          status?: 'sent' | 'failed'
+          error?: string | null
         }
         Update: {
           id?: string
@@ -273,6 +277,8 @@ export type Database = {
           channel?: 'email' | 'push'
           tender_count?: number
           sent_at?: string
+          status?: 'sent' | 'failed'
+          error?: string | null
         }
         Relationships: []
       }
