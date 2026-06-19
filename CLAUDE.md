@@ -7,7 +7,7 @@ EU public procurement intelligence SaaS. Monitors TED (Tenders Electronic Daily)
 - **Framework**: Next.js 16.2 (App Router), React 19, TypeScript 5
 - **Styling**: Tailwind CSS v4 — automatic dark mode via `prefers-color-scheme` overrides in `globals.css`
 - **Database**: Supabase (Postgres + RLS + Auth)
-- **AI**: Anthropic Claude Sonnet (`claude-sonnet-4-20250514`) via `@anthropic-ai/sdk`
+- **AI**: Anthropic Claude Sonnet (`claude-sonnet-4-6`) via `@anthropic-ai/sdk`
 - **Email**: Resend (`onboarding@resend.dev` for now)
 - **Payments**: Stripe (wired but not enforced yet)
 - **Deploy**: Vercel with cron jobs
@@ -67,7 +67,7 @@ src/
 - Supabase service-role client for cron/backfill (bypasses RLS). Anon client for user-facing pages.
 - Paginated Supabase queries (`.range()`) for large result sets — default limit is 1000 rows.
 - Cache batching in groups of 500 for `.in()` queries to avoid PostgREST URL limits.
-- Claude assistant-prefill technique: send `[` as assistant message to force JSON array output.
+- Claude JSON output: prompt for "Return ONLY a JSON array/object" and regex-extract the first `[...]`/`{...}` span. (Assistant-prefill is not used — it returns a 400 on Sonnet 4.6.)
 - CPV codes always 8-digit padded: `normCpv = (c) => c.replace(/-\d+$/, '').padEnd(8, '0')`
 - "Follow" (not "Subscribe") for bookmarked tenders throughout UI.
 - Dark mode is CSS-based in `globals.css` — no per-component `dark:` classes needed.

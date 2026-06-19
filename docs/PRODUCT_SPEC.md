@@ -25,7 +25,7 @@ TED is comprehensive but painful to use: raw search UX, no persistent filters, n
 | Framework | **Next.js** (App Router) | BUILT |
 | Database & Auth | **Supabase** (Postgres, RLS, auth) | BUILT |
 | Styling | **Tailwind CSS** | BUILT |
-| AI | **Anthropic Claude API** (claude-sonnet-4-20250514) | BUILT |
+| AI | **Anthropic Claude API** (claude-sonnet-4-6) | BUILT |
 | Email | **Resend** | BUILT (notifications) |
 | Background Jobs | **Vercel Cron** + Next.js API routes | BUILT |
 | Payments | **Stripe** | BUILT (webhooks, pricing page) |
