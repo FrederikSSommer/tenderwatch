@@ -238,6 +238,10 @@ export function OnboardingWizardV2({
   const [exampleTenders, setExampleTenders] = useState<ExampleTender[]>([])
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set())
   const [dislikedIds, setDislikedIds] = useState<Set<string>>(new Set())
+  // True when example-tenders found nothing strong — lets the user skip the
+  // (optional) swipe step and build a profile from their description instead
+  // of being dead-ended on the sectors screen.
+  const [noStrongMatches, setNoStrongMatches] = useState(false)
 
   // Step 4: Generated profile
   const [generatedProfile, setGeneratedProfile] = useState<GeneratedProfile | null>(null)
@@ -276,6 +280,7 @@ export function OnboardingWizardV2({
     if (selectedSectorIds.size === 0) return
     setLoading(true)
     setError(null)
+    setNoStrongMatches(false)
     const sectors = availableSectors.filter(s => selectedSectorIds.has(s.id)).map(s => s.label)
 
     try {
@@ -293,10 +298,13 @@ export function OnboardingWizardV2({
       if (data.noMatches || !data.tenders || data.tenders.length === 0) {
         // Too few strong matches — prompt the user to refine rather than
         // showing weakly-relevant tenders (which would poison the generated
-        // profile via forced thumbs-up/down).
+        // profile via forced thumbs-up/down). The swipe step is optional, so
+        // also surface a "skip" path (see noStrongMatches below) instead of
+        // dead-ending the user on this screen.
         setError(
-          'I couldn\'t find tenders that closely match your description from the last 180 days. Try making your description more specific about the exact services or products you offer, then continue again.'
+          'I couldn\'t find example tenders that closely match from the last 180 days. Try selecting more sectors above, refining your description (Back), or skip ahead and I\'ll build your profile from your description.'
         )
+        setNoStrongMatches(true)
       } else {
         setExampleTenders(data.tenders)
         setPhase('tenders')
@@ -310,6 +318,11 @@ export function OnboardingWizardV2({
   async function goToGenerateProfile() {
     setPhase('generating')
     setError(null)
+
+    // If the user reached this via the swipe step they go back to 'tenders'
+    // on failure; if they skipped it (no examples found), send them back to
+    // 'sectors' so they don't land on an empty swipe screen.
+    const fallbackPhase: Phase = exampleTenders.length > 0 ? 'tenders' : 'sectors'
 
     const sectors = availableSectors.filter(s => selectedSectorIds.has(s.id)).map(s => s.label)
     const liked = exampleTenders.filter(t => likedIds.has(t.id))
@@ -338,11 +351,11 @@ export function OnboardingWizardV2({
         setPhase('review')
       } else {
         setError('Failed to generate profile. Please try again.')
-        setPhase('tenders')
+        setPhase(fallbackPhase)
       }
     } catch {
       setError('Network error. Please try again.')
-      setPhase('tenders')
+      setPhase(fallbackPhase)
     }
   }
 
@@ -470,6 +483,15 @@ export function OnboardingWizardV2({
     if (next.has(id)) next.delete(id)
     else next.add(id)
     return next
+  }
+
+  function toggleSector(id: string) {
+    setSelectedSectorIds(prev => toggleSet(prev, id))
+    // Changing the selection invalidates the previous "no matches" result.
+    if (noStrongMatches) {
+      setNoStrongMatches(false)
+      setError(null)
+    }
   }
 
   function toggleLike(id: string) {
@@ -642,7 +664,7 @@ export function OnboardingWizardV2({
                 label={s.label}
                 emoji={s.emoji}
                 selected={selectedSectorIds.has(s.id)}
-                onClick={() => setSelectedSectorIds(toggleSet(selectedSectorIds, s.id))}
+                onClick={() => toggleSector(s.id)}
               />
             ))}
           </div>
@@ -651,14 +673,26 @@ export function OnboardingWizardV2({
             <button onClick={() => setPhase('basics')} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
               <ArrowLeft className="h-4 w-4" /> Back
             </button>
-            <button
-              onClick={goToTenders}
-              disabled={selectedSectorIds.size === 0 || loading}
-              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-              {loading ? 'Searching TED...' : 'Show me tenders'}
-            </button>
+            <div className="flex items-center gap-3">
+              {noStrongMatches && (
+                <button
+                  onClick={goToGenerateProfile}
+                  disabled={loading}
+                  className="inline-flex items-center gap-2 rounded-lg border border-blue-600 px-5 py-2.5 text-sm font-semibold text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+                >
+                  Skip &amp; build my profile
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              )}
+              <button
+                onClick={goToTenders}
+                disabled={selectedSectorIds.size === 0 || loading}
+                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                {loading ? 'Searching TED...' : noStrongMatches ? 'Try again' : 'Show me tenders'}
+              </button>
+            </div>
           </div>
         </div>
       )}
