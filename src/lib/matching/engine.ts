@@ -33,43 +33,46 @@ function getDefaultClient(): SupabaseSrv {
   )
 }
 
-// Build per-user learned signals from each user's subscribed (bookmarked) tenders.
-// These bias future scoring toward patterns the user has shown interest in.
-async function fetchLearnedSignalsByUser(
+// Build per-profile learned signals from each profile's subscribed (bookmarked)
+// tenders. These bias future scoring toward patterns the user has shown interest
+// in FOR THAT PROFILE. Scoping by profile (not user) is critical: a user with
+// both a "naval architecture" and a "road construction" profile must not have
+// road-tender signals leak into the naval profile's scoring.
+async function fetchLearnedSignalsByProfile(
   supabase: SupabaseSrv,
-  userIds: string[]
+  profileIds: string[]
 ): Promise<Map<string, LearnedSignals>> {
   const out = new Map<string, LearnedSignals>()
-  if (userIds.length === 0) return out
+  if (profileIds.length === 0) return out
 
   const { data, error } = await supabase
     .from('matches')
-    .select('user_id, tender:tenders(title, cpv_codes)')
-    .in('user_id', userIds)
+    .select('profile_id, tender:tenders(title, cpv_codes)')
+    .in('profile_id', profileIds)
     .eq('bookmarked', true)
 
   if (error || !data) return out
 
-  const byUser = new Map<string, { titles: string[]; cpvs: string[] }>()
+  const byProfile = new Map<string, { titles: string[]; cpvs: string[] }>()
   for (const row of data as Array<{
-    user_id: string
+    profile_id: string
     tender: { title: string | null; cpv_codes: string[] | null } | null
   }>) {
     const t = row.tender
     if (!t) continue
-    const bucket = byUser.get(row.user_id) || { titles: [], cpvs: [] }
+    const bucket = byProfile.get(row.profile_id) || { titles: [], cpvs: [] }
     if (t.title) bucket.titles.push(t.title)
     if (Array.isArray(t.cpv_codes)) bucket.cpvs.push(...t.cpv_codes)
-    byUser.set(row.user_id, bucket)
+    byProfile.set(row.profile_id, bucket)
   }
 
-  for (const [uid, b] of byUser) {
+  for (const [pid, b] of byProfile) {
     const cpvCounts = new Map<string, number>()
     for (const c of b.cpvs) cpvCounts.set(c, (cpvCounts.get(c) || 0) + 1)
     const recurringCpvs = [...cpvCounts.entries()]
       .filter(([, n]) => n >= 2)
       .map(([c]) => c)
-    out.set(uid, {
+    out.set(pid, {
       cpv_codes: recurringCpvs.length > 0 ? recurringCpvs : [...new Set(b.cpvs)].slice(0, 20),
       keywords: extractLearnedKeywords(b.titles),
     })
@@ -77,58 +80,58 @@ async function fetchLearnedSignalsByUser(
   return out
 }
 
-// Fetch followed tender titles per user — fed to Claude as positive examples.
-async function fetchFollowedTitlesByUser(
+// Fetch followed tender titles per profile — fed to Claude as positive examples.
+async function fetchFollowedTitlesByProfile(
   supabase: SupabaseSrv,
-  userIds: string[]
+  profileIds: string[]
 ): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>()
-  if (userIds.length === 0) return out
+  if (profileIds.length === 0) return out
 
   const { data } = await supabase
     .from('matches')
-    .select('user_id, tender:tenders(title)')
-    .in('user_id', userIds)
+    .select('profile_id, tender:tenders(title)')
+    .in('profile_id', profileIds)
     .eq('bookmarked', true)
 
   if (!data) return out
 
   for (const row of data as Array<{
-    user_id: string
+    profile_id: string
     tender: { title: string | null } | null
   }>) {
     if (!row.tender?.title) continue
-    const list = out.get(row.user_id) || []
+    const list = out.get(row.profile_id) || []
     list.push(row.tender.title)
-    out.set(row.user_id, list)
+    out.set(row.profile_id, list)
   }
   return out
 }
 
-// Fetch dismissed tender titles per user — fed to Claude as negative examples.
-async function fetchDismissedTitlesByUser(
+// Fetch dismissed tender titles per profile — fed to Claude as negative examples.
+async function fetchDismissedTitlesByProfile(
   supabase: SupabaseSrv,
-  userIds: string[]
+  profileIds: string[]
 ): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>()
-  if (userIds.length === 0) return out
+  if (profileIds.length === 0) return out
 
   const { data } = await supabase
     .from('matches')
-    .select('user_id, tender:tenders(title)')
-    .in('user_id', userIds)
+    .select('profile_id, tender:tenders(title)')
+    .in('profile_id', profileIds)
     .eq('dismissed', true)
 
   if (!data) return out
 
   for (const row of data as Array<{
-    user_id: string
+    profile_id: string
     tender: { title: string | null } | null
   }>) {
     if (!row.tender?.title) continue
-    const list = out.get(row.user_id) || []
+    const list = out.get(row.profile_id) || []
     list.push(row.tender.title)
-    out.set(row.user_id, list)
+    out.set(row.profile_id, list)
   }
   return out
 }
@@ -224,10 +227,11 @@ export async function matchNewTenders(
   }
   console.log(`[matching] Cache: ${seen.size} complete pairs will be skipped`)
 
-  const userIds = [...new Set(profiles.map(p => p.user_id))]
-  const learnedByUser = await fetchLearnedSignalsByUser(supabase, userIds)
-  const followedByUser = await fetchFollowedTitlesByUser(supabase, userIds)
-  const dismissedByUser = await fetchDismissedTitlesByUser(supabase, userIds)
+  // Signals are scoped per-profile (not per-user) so a user's multiple
+  // profiles don't cross-contaminate each other's scoring.
+  const learnedByProfile = await fetchLearnedSignalsByProfile(supabase, profileIds)
+  const followedByProfile = await fetchFollowedTitlesByProfile(supabase, profileIds)
+  const dismissedByProfile = await fetchDismissedTitlesByProfile(supabase, profileIds)
 
   // Normalise tenders once (profile loop filters which ones are seen).
   const tenderShape = (t: typeof tenders[number]): MatchingTender => ({
@@ -264,9 +268,9 @@ export async function matchNewTenders(
       },
       candidates,
       {
-        followedTitles: followedByUser.get(profile.user_id) || [],
-        dismissedTitles: dismissedByUser.get(profile.user_id) || [],
-        learnedSignals: learnedByUser.get(profile.user_id),
+        followedTitles: followedByProfile.get(profile.id) || [],
+        dismissedTitles: dismissedByProfile.get(profile.id) || [],
+        learnedSignals: learnedByProfile.get(profile.id),
         stage1Threshold: STAGE1_THRESHOLD,
         stage1Cap: AI_FILTER_CAP,
         aiBatchSize: AI_BATCH_SIZE,
