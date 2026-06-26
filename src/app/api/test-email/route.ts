@@ -13,52 +13,38 @@ export async function POST() {
     return NextResponse.json({ error: 'Not logged in' }, { status: 401 })
   }
 
-  const sampleTenders = [
-    {
-      id: 'test-001',
-      title: 'Ship Hull Structural Analysis Services — Danish Navy',
-      buyer_name: 'Danish Defence Acquisition and Logistics Organisation',
-      buyer_country: 'DK',
-      estimated_value_eur: 2500000,
-      submission_deadline: new Date(Date.now() + 30 * 86400000).toISOString(),
-      relevance_score: 92,
-      cpv_codes: ['71327000', '71300000'],
-      ai_reason: 'Directly relevant — structural analysis for naval vessel hulls matches maritime engineering profile',
-    },
-    {
-      id: 'test-002',
-      title: 'Naval Vessel Design Consultancy — Corvette Class',
-      buyer_name: 'Norwegian Defence Materiel Agency',
-      buyer_country: 'NO',
-      estimated_value_eur: 4100000,
-      submission_deadline: new Date(Date.now() + 45 * 86400000).toISOString(),
-      relevance_score: 87,
-      cpv_codes: ['71300000', '34513300'],
-      ai_reason: 'Corvette-class vessel design consultancy aligns with naval engineering expertise',
-    },
-    {
-      id: 'test-003',
-      title: 'Offshore Wind Farm Foundation Design — Kriegers Flak II',
-      buyer_name: 'Energinet',
-      buyer_country: 'DK',
-      estimated_value_eur: 3200000,
-      submission_deadline: new Date(Date.now() + 20 * 86400000).toISOString(),
-      relevance_score: 65,
-      cpv_codes: ['71312000', '71327000'],
-      ai_reason: 'Offshore wind foundation design requires structural engineering expertise',
-    },
-    {
-      id: 'test-004',
-      title: 'Maritime Safety Equipment Inspection Services',
-      buyer_name: 'Swedish Transport Agency',
-      buyer_country: 'SE',
-      estimated_value_eur: 650000,
-      submission_deadline: new Date(Date.now() + 15 * 86400000).toISOString(),
-      relevance_score: 45,
-      cpv_codes: ['71300000'],
-      ai_reason: 'Maritime safety inspection — tangentially related to maritime sector',
-    },
+  // Use real tenders so the "View tender" links in the email resolve —
+  // fabricated IDs 404 against the tender detail page's DB lookup.
+  const { data: realTenders } = await supabase
+    .from('tenders')
+    .select('id, title, buyer_name, buyer_country, estimated_value_eur, submission_deadline, cpv_codes')
+    .order('created_at', { ascending: false })
+    .limit(4)
+
+  if (!realTenders || realTenders.length === 0) {
+    return NextResponse.json({
+      error: 'No tenders in the database yet — ingest some tenders before sending a test email',
+    }, { status: 400 })
+  }
+
+  const sampleReasons = [
+    'Directly relevant — matches your profile\'s sector and CPV codes',
+    'Strong overlap with your monitored keywords and buyer region',
+    'Partial match — overlaps with one of your tracked CPV codes',
+    'Tangentially related to your monitoring profile',
   ]
+
+  const sampleTenders = realTenders.map((t, i) => ({
+    id: t.id,
+    title: t.title,
+    buyer_name: t.buyer_name,
+    buyer_country: t.buyer_country,
+    estimated_value_eur: t.estimated_value_eur,
+    submission_deadline: t.submission_deadline,
+    relevance_score: 90 - i * 12,
+    cpv_codes: t.cpv_codes,
+    ai_reason: sampleReasons[i] ?? sampleReasons[sampleReasons.length - 1],
+  }))
 
   try {
     await sendDailyDigest({
