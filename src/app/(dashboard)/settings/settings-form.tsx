@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { BackfillButton } from '@/components/BackfillButton'
-import { Mail, Bell, BellOff, Save, Loader2 } from 'lucide-react'
+import { Mail, Bell, BellOff, Save, Loader2, Send, CheckCircle, AlertCircle } from 'lucide-react'
 
 interface SettingsFormProps {
   email: string
@@ -45,6 +45,8 @@ export function SettingsForm({ email, company, subscription, profileCount }: Set
   const [emailFrequency, setEmailFrequency] = useState(subscription?.email_frequency ?? 'daily')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [testingEmail, setTestingEmail] = useState(false)
+  const [testEmailResult, setTestEmailResult] = useState<{ ok: boolean; message: string } | null>(null)
 
   async function handleSave() {
     setSaving(true)
@@ -64,6 +66,25 @@ export function SettingsForm({ email, company, subscription, profileCount }: Set
     setSaving(false)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
+  }
+
+  async function handleTestEmail() {
+    setTestingEmail(true)
+    setTestEmailResult(null)
+
+    try {
+      const response = await fetch('/api/test-email', { method: 'POST' })
+      const data = await response.json()
+      if (!response.ok) {
+        setTestEmailResult({ ok: false, message: data.details || data.error || 'Failed to send' })
+      } else {
+        setTestEmailResult({ ok: true, message: `Sent to ${data.sentTo}` })
+      }
+    } catch {
+      setTestEmailResult({ ok: false, message: 'Network error — please try again' })
+    }
+
+    setTestingEmail(false)
   }
 
   const plan = subscription?.plan ?? 'free'
@@ -132,6 +153,23 @@ export function SettingsForm({ email, company, subscription, profileCount }: Set
                 </label>
               )
             })}
+          </div>
+
+          <div className="mt-4 pt-4 border-t border-gray-100 flex items-center gap-3">
+            <button
+              onClick={handleTestEmail}
+              disabled={testingEmail}
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {testingEmail ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {testingEmail ? 'Sending...' : 'Send test email'}
+            </button>
+            {testEmailResult && (
+              <span className={`text-sm flex items-center gap-1 ${testEmailResult.ok ? 'text-green-600' : 'text-red-600'}`}>
+                {testEmailResult.ok ? <CheckCircle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+                {testEmailResult.message}
+              </span>
+            )}
           </div>
         </div>
       </section>
