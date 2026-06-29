@@ -20,23 +20,43 @@ export async function GET(request: NextRequest) {
   const since = new Date()
   since.setDate(since.getDate() - 1)
 
+  const DIGEST_MIN_SCORE = 60
+
   try {
+    // Score & persist any new tenders. We intentionally DON'T build the digest
+    // from this return value: matchNewTenders skips (profile, tender) pairs it
+    // has already scored on an earlier run, so on most days it returns nothing
+    // even though qualifying matches exist in the DB. Driving the digest off
+    // its return value meant a single already-scored day produced no email at
+    // all. Instead we always read the digest from the `matches` table below.
     const matches = await matchNewTenders(since)
 
     const supabase = getServiceClient()
-    const userMatches = new Map<string, typeof matches>()
-    for (const match of matches) {
-      const existing = userMatches.get(match.user_id) || []
-      existing.push(match)
-      userMatches.set(match.user_id, existing)
+
+    // Find every user with an un-notified, non-dismissed match above the digest
+    // threshold within the widest possible window (weekly catch-up = 7 days).
+    // Per-user frequency then decides whether to send and how far to look back.
+    const widestWindow = new Date()
+    widestWindow.setDate(widestWindow.getDate() - 7)
+    const { data: pendingRows, error: pendingErr } = await supabase
+      .from('matches')
+      .select('user_id')
+      .eq('notified', false)
+      .eq('dismissed', false)
+      .gte('relevance_score', DIGEST_MIN_SCORE)
+      .gte('created_at', widestWindow.toISOString())
+    if (pendingErr) {
+      console.error('Failed to load pending matches:', pendingErr)
+      return NextResponse.json({ error: 'Match and notify failed' }, { status: 500 })
     }
+
+    const userIds = [...new Set((pendingRows || []).map(r => r.user_id))]
 
     let emailsSent = 0
     let emailsFailed = 0
-    const today = new Date()
-    const isMonday = today.getUTCDay() === 1
+    const isMonday = new Date().getUTCDay() === 1
 
-    for (const [userId, userMatchList] of userMatches) {
+    for (const userId of userIds) {
       const { data: { user } } = await supabase.auth.admin.getUserById(userId)
       if (!user?.email) continue
 
@@ -68,35 +88,21 @@ export async function GET(request: NextRequest) {
       //   .single()
       // if (!sub || sub.plan === 'free' || sub.status !== 'active') continue
 
-      // For weekly digest, also include un-notified matches from the past week
-      let finalMatchList = userMatchList
-      if (frequency === 'weekly') {
-        const weekAgo = new Date()
-        weekAgo.setDate(weekAgo.getDate() - 7)
-        const { data: weekMatches } = await supabase
-          .from('matches')
-          .select('tender_id, relevance_score, matched_cpv, matched_keywords, ai_reason')
-          .eq('user_id', userId)
-          .eq('notified', false)
-          .eq('dismissed', false)
-          .gte('created_at', weekAgo.toISOString())
-        if (weekMatches) {
-          const existingIds = new Set(finalMatchList.map(m => m.tender_id))
-          for (const wm of weekMatches) {
-            if (!existingIds.has(wm.tender_id)) {
-              finalMatchList.push({
-                tender_id: wm.tender_id,
-                profile_id: '',
-                user_id: userId,
-                relevance_score: wm.relevance_score,
-                matched_cpv: wm.matched_cpv,
-                matched_keywords: wm.matched_keywords,
-                ai_reason: wm.ai_reason,
-              })
-            }
-          }
-        }
-      }
+      // Daily digests cover a 2-day window (so a single missed/failed run is
+      // recovered the next day); weekly digests cover the past 7 days.
+      const lookback = new Date()
+      lookback.setDate(lookback.getDate() - (frequency === 'weekly' ? 7 : 2))
+      const { data: pendingMatches } = await supabase
+        .from('matches')
+        .select('tender_id, relevance_score, matched_cpv, matched_keywords, ai_reason')
+        .eq('user_id', userId)
+        .eq('notified', false)
+        .eq('dismissed', false)
+        .gte('relevance_score', DIGEST_MIN_SCORE)
+        .gte('created_at', lookback.toISOString())
+
+      const finalMatchList = pendingMatches || []
+      if (finalMatchList.length === 0) continue
 
       const tenderIds = finalMatchList.map(m => m.tender_id)
       const { data: tenders } = await supabase
@@ -106,7 +112,6 @@ export async function GET(request: NextRequest) {
 
       if (!tenders) continue
 
-      const DIGEST_MIN_SCORE = 60
       const digestTenders = finalMatchList.filter(m => m.relevance_score >= DIGEST_MIN_SCORE).flatMap(m => {
         const tender = tenders.find(t => t.id === m.tender_id)
         if (!tender) return []
