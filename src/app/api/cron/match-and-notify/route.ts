@@ -4,6 +4,24 @@ import { sendDailyDigest } from '@/lib/notifications/email-digest'
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/supabase/types'
 
+// The matching pipeline makes many multi-second Claude calls before the
+// first email goes out — the platform's default function timeout kills the
+// run mid-pipeline and no digest is ever sent.
+export const maxDuration = 300
+
+// Only matches scoring at least this are emailed.
+const DIGEST_MIN_SCORE = 60
+// How far back the email phase looks for un-notified matches. Covers the
+// weekly frequency and lets matches from a failed or timed-out run go out
+// on the next one instead of being lost.
+const LOOKBACK_DAYS = 7
+const BATCH = 500
+
+type PendingMatch = Pick<
+  Database['public']['Tables']['matches']['Row'],
+  'id' | 'tender_id' | 'profile_id' | 'user_id' | 'relevance_score' | 'ai_reason'
+>
+
 function getServiceClient() {
   return createClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -17,26 +35,63 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const supabase = getServiceClient()
+
+  // Phase 1: score new tenders. A failure here must not block the email
+  // phase — matches persisted by earlier runs (or by onboarding backfill)
+  // still need to be delivered.
   const since = new Date()
   since.setDate(since.getDate() - 1)
+  let newMatches = 0
+  let matchError: string | null = null
+  try {
+    const matches = await matchNewTenders(since, { supabase })
+    newMatches = matches.length
+  } catch (err) {
+    matchError = err instanceof Error ? err.message : String(err)
+    console.error('Matching failed, continuing to email phase:', err)
+  }
 
   try {
-    const matches = await matchNewTenders(since)
+    // Phase 2: email every un-notified match above the threshold, regardless
+    // of which run created it. The matching cache skips already-scored pairs,
+    // so the in-memory result above misses matches created by the onboarding
+    // backfill, the hourly alert, or a previous run whose email step failed.
+    const lookback = new Date()
+    lookback.setDate(lookback.getDate() - LOOKBACK_DAYS)
 
-    const supabase = getServiceClient()
-    const userMatches = new Map<string, typeof matches>()
-    for (const match of matches) {
-      const existing = userMatches.get(match.user_id) || []
-      existing.push(match)
-      userMatches.set(match.user_id, existing)
+    const pending: PendingMatch[] = []
+    let offset = 0
+    let fetchMore = true
+    while (fetchMore) {
+      const { data, error } = await supabase
+        .from('matches')
+        .select('id, tender_id, profile_id, user_id, relevance_score, ai_reason')
+        .eq('notified', false)
+        .eq('dismissed', false)
+        .gte('relevance_score', DIGEST_MIN_SCORE)
+        .gte('created_at', lookback.toISOString())
+        .order('id')
+        .range(offset, offset + 999)
+      if (error) throw error
+      if (!data || data.length === 0) break
+      pending.push(...data)
+      offset += data.length
+      fetchMore = data.length === 1000
+    }
+
+    const byUser = new Map<string, PendingMatch[]>()
+    for (const m of pending) {
+      const list = byUser.get(m.user_id) || []
+      list.push(m)
+      byUser.set(m.user_id, list)
     }
 
     let emailsSent = 0
     let emailsFailed = 0
-    const today = new Date()
-    const isMonday = today.getUTCDay() === 1
+    const isMonday = new Date().getUTCDay() === 1
 
-    for (const [userId, userMatchList] of userMatches) {
+    for (const [userId, userMatches] of byUser) {
       const { data: { user } } = await supabase.auth.admin.getUserById(userId)
       if (!user?.email) continue
 
@@ -68,60 +123,44 @@ export async function GET(request: NextRequest) {
       //   .single()
       // if (!sub || sub.plan === 'free' || sub.status !== 'active') continue
 
-      // For weekly digest, also include un-notified matches from the past week
-      let finalMatchList = userMatchList
-      if (frequency === 'weekly') {
-        const weekAgo = new Date()
-        weekAgo.setDate(weekAgo.getDate() - 7)
-        const { data: weekMatches } = await supabase
-          .from('matches')
-          .select('tender_id, relevance_score, matched_cpv, matched_keywords, ai_reason')
-          .eq('user_id', userId)
-          .eq('notified', false)
-          .eq('dismissed', false)
-          .gte('created_at', weekAgo.toISOString())
-        if (weekMatches) {
-          const existingIds = new Set(finalMatchList.map(m => m.tender_id))
-          for (const wm of weekMatches) {
-            if (!existingIds.has(wm.tender_id)) {
-              finalMatchList.push({
-                tender_id: wm.tender_id,
-                profile_id: '',
-                user_id: userId,
-                relevance_score: wm.relevance_score,
-                matched_cpv: wm.matched_cpv,
-                matched_keywords: wm.matched_keywords,
-                ai_reason: wm.ai_reason,
-              })
-            }
-          }
+      // The same tender can match several of the user's profiles — email it
+      // once, at its best score.
+      const byTender = new Map<string, PendingMatch>()
+      for (const m of userMatches) {
+        const current = byTender.get(m.tender_id)
+        if (!current || m.relevance_score > current.relevance_score) {
+          byTender.set(m.tender_id, m)
         }
       }
 
-      const tenderIds = finalMatchList.map(m => m.tender_id)
-      const { data: tenders } = await supabase
-        .from('tenders')
-        .select('*')
-        .in('id', tenderIds)
+      const tenderIds = [...byTender.keys()]
+      const tenders: Database['public']['Tables']['tenders']['Row'][] = []
+      for (let i = 0; i < tenderIds.length; i += BATCH) {
+        const { data } = await supabase
+          .from('tenders')
+          .select('*')
+          .in('id', tenderIds.slice(i, i + BATCH))
+        if (data) tenders.push(...data)
+      }
+      const tenderById = new Map(tenders.map(t => [t.id, t]))
 
-      if (!tenders) continue
-
-      const DIGEST_MIN_SCORE = 60
-      const digestTenders = finalMatchList.filter(m => m.relevance_score >= DIGEST_MIN_SCORE).flatMap(m => {
-        const tender = tenders.find(t => t.id === m.tender_id)
-        if (!tender) return []
-        return [{
-          id: tender.id,
-          title: tender.title,
-          buyer_name: tender.buyer_name,
-          buyer_country: tender.buyer_country,
-          estimated_value_eur: tender.estimated_value_eur,
-          submission_deadline: tender.submission_deadline,
-          relevance_score: m.relevance_score,
-          cpv_codes: tender.cpv_codes,
-          ai_reason: m.ai_reason,
-        }]
-      }).sort((a, b) => b.relevance_score - a.relevance_score)
+      const digestTenders = [...byTender.values()]
+        .flatMap(m => {
+          const tender = tenderById.get(m.tender_id)
+          if (!tender) return []
+          return [{
+            id: tender.id,
+            title: tender.title,
+            buyer_name: tender.buyer_name,
+            buyer_country: tender.buyer_country,
+            estimated_value_eur: tender.estimated_value_eur,
+            submission_deadline: tender.submission_deadline,
+            relevance_score: m.relevance_score,
+            cpv_codes: tender.cpv_codes,
+            ai_reason: m.ai_reason,
+          }]
+        })
+        .sort((a, b) => b.relevance_score - a.relevance_score)
 
       if (digestTenders.length === 0) continue
 
@@ -141,14 +180,17 @@ export async function GET(request: NextRequest) {
           status: 'sent' as const,
         })
 
-        // Only mark the matches actually included in the email — sub-threshold
-        // matches stay un-notified so the weekly catch-up can still pick them up.
-        const digestTenderIds = digestTenders.map(t => t.id)
-        await supabase
-          .from('matches')
-          .update({ notified: true, notified_at: new Date().toISOString() })
-          .in('tender_id', digestTenderIds)
-          .eq('user_id', userId)
+        // Mark every pending match for the emailed tenders as notified,
+        // including lower-scored duplicates on the user's other profiles.
+        const notifiedIds = userMatches
+          .filter(m => tenderById.has(m.tender_id))
+          .map(m => m.id)
+        for (let i = 0; i < notifiedIds.length; i += BATCH) {
+          await supabase
+            .from('matches')
+            .update({ notified: true, notified_at: new Date().toISOString() })
+            .in('id', notifiedIds.slice(i, i + BATCH))
+        }
       } catch (err) {
         emailsFailed++
         console.error(`Failed to send digest to ${user.email}:`, err)
@@ -162,7 +204,14 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true, matches: matches.length, emailsSent, emailsFailed })
+    return NextResponse.json({
+      success: true,
+      newMatches,
+      matchError,
+      pendingMatches: pending.length,
+      emailsSent,
+      emailsFailed,
+    })
   } catch (error) {
     console.error('Match and notify error:', error)
     return NextResponse.json({ error: 'Match and notify failed' }, { status: 500 })

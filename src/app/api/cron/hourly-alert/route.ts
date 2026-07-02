@@ -5,6 +5,9 @@ import { ingestRecentTenders } from '@/lib/ted/ingest'
 import { matchNewTenders } from '@/lib/matching/engine'
 import { sendHighMatchAlert, AlertTender } from '@/lib/notifications/alert-email'
 
+// Ingest + Claude rerank can outlive the platform's default function timeout.
+export const maxDuration = 300
+
 const ALERT_THRESHOLD = 80
 // Look back 2 hours to absorb TED API indexing lag
 const LOOKBACK_HOURS = 2

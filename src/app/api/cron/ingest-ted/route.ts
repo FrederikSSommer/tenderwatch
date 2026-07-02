@@ -5,6 +5,10 @@ import { ingestRecentHilmaNotices } from '@/lib/hilma/ingest'
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/supabase/types'
 
+// Paged TED + Hilma ingestion can outlive the platform's default function
+// timeout, silently dropping the rest of the day's tenders.
+export const maxDuration = 300
+
 function getServiceClient() {
   return createClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
