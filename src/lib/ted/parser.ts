@@ -114,7 +114,10 @@ export function parseTEDNotice(notice: Record<string, unknown>): ParsedTender | 
       document_url: null,
       ted_url: `https://ted.europa.eu/en/notice/-/detail/${pubNumber}`,
       language: 'EN',
-      raw_data: notice,
+      // All application features use the normalized fields above. Keeping the
+      // full source payload duplicates the catalogue and exhausts DB storage.
+      // The original notice remains available through external_id / ted_url.
+      raw_data: null,
     }
   } catch (err) {
     console.error('Failed to parse TED notice:', err)
