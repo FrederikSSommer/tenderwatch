@@ -77,9 +77,51 @@ export interface ScoredMatch {
 
 // ── Stage-2 Claude rerank ───────────────────────────────────────────────
 
+// One client per process. The SDK retries 408/409/429/5xx and connection
+// errors with exponential backoff (honouring retry-after); the default of 2
+// retries was too few to ride out rate-limit / overload bursts when several
+// profiles are scored back to back. The timeout is capped well below the
+// 300 s function limit so a hung request fails and retries instead of the
+// platform killing the whole run.
+let anthropicClient: Anthropic | null = null
 function getAnthropicClient() {
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
+  if (!anthropicClient) {
+    anthropicClient = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY!,
+      maxRetries: 5,
+      timeout: 60_000,
+    })
+  }
+  return anthropicClient
 }
+
+// Structured output schema: the API guarantees the response is valid JSON of
+// this shape, so no regex extraction / JSON.parse failures on stray prose,
+// brackets or unescaped quotes inside a "why".
+const RERANK_SCHEMA = {
+  type: 'object',
+  properties: {
+    matches: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          i: { type: 'integer' },
+          score: { type: 'integer' },
+          why: { type: 'string' },
+        },
+        required: ['i', 'score', 'why'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['matches'],
+  additionalProperties: false,
+} as const
+
+// Attempts per batch for failures the SDK does not retry itself
+// (truncated/refused output, retries exhausted).
+const BATCH_ATTEMPTS = 2
 
 interface RerankCandidate {
   tender: MatchingTender
@@ -90,14 +132,38 @@ interface RerankCandidate {
 
 interface AiResult {
   score: number
-  why: string | null
+  why: string
+}
+
+interface AiRerankOutput {
+  scores: Map<string, AiResult>
+  /** Tenders Claude never evaluated because their batch failed. */
+  unscored: string[]
+}
+
+async function rerankBatch(
+  prompt: string
+): Promise<{ i: number; score: number; why: string }[]> {
+  const msg = await getAnthropicClient().messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 8000,
+    messages: [{ role: 'user', content: prompt }],
+    output_config: { format: { type: 'json_schema', schema: RERANK_SCHEMA } },
+  })
+  if (msg.stop_reason !== 'end_turn') {
+    throw new Error(`rerank stopped with ${msg.stop_reason}`)
+  }
+  const block = msg.content.find(b => b.type === 'text')
+  if (!block || block.type !== 'text') throw new Error('rerank returned no text')
+  return (JSON.parse(block.text) as { matches: { i: number; score: number; why: string }[] }).matches
 }
 
 /**
  * Stage-2 Claude rerank. Sends the profile snapshot + a batch of candidates
- * and asks Claude to score each 0-10 with a short reason. Unchanged prompt
- * semantics vs. the previous engine.ts implementation — just extracted so
- * both the cron and the wizard call it.
+ * and asks Claude to score each 0-10 with a short reason.
+ *
+ * A batch that still fails after retries is reported in `unscored` and
+ * produces NO matches — nothing is ever accepted without Claude's verdict.
  */
 async function aiRerank(
   profile: MatchingProfile,
@@ -106,9 +172,10 @@ async function aiRerank(
   dismissedTitles: string[],
   batchSize: number,
   scoreThreshold: number
-): Promise<Map<string, AiResult>> {
-  const out = new Map<string, AiResult>()
-  if (candidates.length === 0) return out
+): Promise<AiRerankOutput> {
+  const scores = new Map<string, AiResult>()
+  const unscored: string[] = []
+  if (candidates.length === 0) return { scores, unscored }
 
   const profileSnapshot =
     `Name: ${profile.name || 'monitoring profile'}\n` +
@@ -147,33 +214,31 @@ ${batch.map((c, i) => `[${i}] "${c.tender.title}"
    CPV: ${(c.tender.cpv_codes || []).slice(0, 6).join(', ') || 'none'}
    ${c.tender.description ? c.tender.description.slice(0, 220) : ''}`).join('\n\n')}
 
-Return ONLY a JSON array. Include ONLY entries scoring ${scoreThreshold} or higher (0-10 scale). Format:
-[{"i": 0, "score": 9, "why": "short reason"}, {"i": 3, "score": 7, "why": "short reason"}, ...]`
+Score each candidate 0-10. In "matches", include ONLY candidates scoring ${scoreThreshold} or higher, each with its index "i", its "score", and a short "why". Return an empty "matches" array if none qualify.`
 
-    try {
-      const msg = await getAnthropicClient().messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 2000,
-        messages: [
-          { role: 'user', content: prompt },
-        ],
-      })
-      const text = msg.content[0].type === 'text' ? msg.content[0].text : '[]'
-      const m = text.match(/\[[\s\S]*?\]/)
-      if (!m) continue
-      const scored: { i: number; score: number; why?: string }[] = JSON.parse(m[0])
-      for (const s of scored) {
-        if (typeof s.i !== 'number' || s.score < scoreThreshold) continue
-        if (s.i < 0 || s.i >= batch.length) continue
-        out.set(batch[s.i].tender.id, { score: s.score, why: s.why || null })
+    let scored: { i: number; score: number; why: string }[] | null = null
+    for (let attempt = 1; attempt <= BATCH_ATTEMPTS && scored === null; attempt++) {
+      try {
+        scored = await rerankBatch(prompt)
+      } catch (err) {
+        console.error(
+          `[core] AI rerank batch failed (attempt ${attempt}/${BATCH_ATTEMPTS}, profile "${profile.name}"):`,
+          err
+        )
       }
-    } catch (err) {
-      console.error('[core] AI rerank batch failed:', err)
-      // On failure, accept Stage-1 candidates as-is with neutral AI score.
-      for (const c of batch) out.set(c.tender.id, { score: 6, why: null })
+    }
+
+    if (scored === null) {
+      for (const c of batch) unscored.push(c.tender.id)
+      continue
+    }
+    for (const s of scored) {
+      if (!Number.isInteger(s.i) || s.i < 0 || s.i >= batch.length) continue
+      if (s.score < scoreThreshold) continue
+      scores.set(batch[s.i].tender.id, { score: s.score, why: s.why })
     }
   }
-  return out
+  return { scores, unscored }
 }
 
 // ── Public entry ────────────────────────────────────────────────────────
@@ -182,16 +247,26 @@ Return ONLY a JSON array. Include ONLY entries scoring ${scoreThreshold} or high
  * Score a set of tenders against a single profile. Runs Stage 1 cheap
  * scoring, drops sub-threshold pairs, caps the survivors, and sends the
  * rest to Claude for Stage 2 rerank. Returns blended-score matches sorted
- * descending.
+ * descending, plus the candidates Claude could not evaluate.
  *
  * Pure: no DB reads/writes. The caller decides what to do with results
  * (persist in `matches` / return in API response / display in a wizard).
  */
+export interface ScoreAndRerankResult {
+  matches: ScoredMatch[]
+  /**
+   * Stage-1 survivors Claude could not evaluate (API failure after retries).
+   * They are NOT in `matches`; callers must not treat them as rejected and
+   * should retry them later.
+   */
+  unscoredTenderIds: string[]
+}
+
 export async function scoreAndRerank(
   profile: MatchingProfile,
   tenders: MatchingTender[],
   options: MatchingOptions = {}
-): Promise<ScoredMatch[]> {
+): Promise<ScoreAndRerankResult> {
   const {
     followedTitles = [],
     dismissedTitles = [],
@@ -237,10 +312,10 @@ export async function scoreAndRerank(
   stage1.sort((a, b) => b.stage1_score - a.stage1_score)
   const topN = stage1.slice(0, stage1Cap)
 
-  if (topN.length === 0) return []
+  if (topN.length === 0) return { matches: [], unscoredTenderIds: [] }
 
   // Stage 2: Claude rerank
-  const aiScores = await aiRerank(
+  const { scores: aiScores, unscored } = await aiRerank(
     profile,
     topN,
     followedTitles,
@@ -263,17 +338,13 @@ export async function scoreAndRerank(
       blended_score: blended,
       matched_cpv: c.matched_cpv,
       matched_keywords: c.matched_keywords,
-      ai_reason:
-        ai.why ||
-        (
-          `Matched on ${c.matched_cpv.length > 0 ? 'CPV ' + c.matched_cpv.slice(0, 2).join(', ') : ''}` +
-          (c.matched_cpv.length > 0 && c.matched_keywords.length > 0 ? ' + ' : '') +
-          (c.matched_keywords.length > 0 ? 'keywords: ' + c.matched_keywords.slice(0, 3).join(', ') : '')
-        ).trim() ||
-        null,
+      ai_reason: ai.why,
     })
   }
 
   matches.sort((a, b) => b.blended_score - a.blended_score)
-  return maxResults ? matches.slice(0, maxResults) : matches
+  return {
+    matches: maxResults ? matches.slice(0, maxResults) : matches,
+    unscoredTenderIds: unscored,
+  }
 }

@@ -15,11 +15,13 @@ export interface MatchResult {
 
 // Stage-1 threshold: any CPV or keyword signal passes through to Claude.
 // Claude is the real arbiter — Stage 1 just trims the candidate pool.
-const STAGE1_THRESHOLD = 5
+export const STAGE1_THRESHOLD = 5
 // Maximum Stage-1 survivors per profile sent to Claude per run.
-const AI_FILTER_CAP = 120
+export const AI_FILTER_CAP = 120
 // Claude batch size.
-const AI_BATCH_SIZE = 30
+export const AI_BATCH_SIZE = 30
+// Stage-2 minimum AI score (0-10) for a pair to become a match.
+export const AI_SCORE_THRESHOLD = 7
 
 type SupabaseSrv = SupabaseClient<Database>
 
@@ -38,7 +40,7 @@ function getDefaultClient(): SupabaseSrv {
 // in FOR THAT PROFILE. Scoping by profile (not user) is critical: a user with
 // both a "naval architecture" and a "road construction" profile must not have
 // road-tender signals leak into the naval profile's scoring.
-async function fetchLearnedSignalsByProfile(
+export async function fetchLearnedSignalsByProfile(
   supabase: SupabaseSrv,
   profileIds: string[]
 ): Promise<Map<string, LearnedSignals>> {
@@ -81,7 +83,7 @@ async function fetchLearnedSignalsByProfile(
 }
 
 // Fetch followed tender titles per profile — fed to Claude as positive examples.
-async function fetchFollowedTitlesByProfile(
+export async function fetchFollowedTitlesByProfile(
   supabase: SupabaseSrv,
   profileIds: string[]
 ): Promise<Map<string, string[]>> {
@@ -109,7 +111,7 @@ async function fetchFollowedTitlesByProfile(
 }
 
 // Fetch dismissed tender titles per profile — fed to Claude as negative examples.
-async function fetchDismissedTitlesByProfile(
+export async function fetchDismissedTitlesByProfile(
   supabase: SupabaseSrv,
   profileIds: string[]
 ): Promise<Map<string, string[]>> {
@@ -245,6 +247,7 @@ export async function matchNewTenders(
   })
 
   const matches: MatchResult[] = []
+  let unscoredTotal = 0
 
   for (const profile of profiles) {
     // Filter tenders not already cached for this profile.
@@ -254,7 +257,7 @@ export async function matchNewTenders(
 
     if (candidates.length === 0) continue
 
-    const results = await scoreAndRerank(
+    const { matches: results, unscoredTenderIds } = await scoreAndRerank(
       {
         id: profile.id,
         name: profile.name,
@@ -274,9 +277,18 @@ export async function matchNewTenders(
         stage1Threshold: STAGE1_THRESHOLD,
         stage1Cap: AI_FILTER_CAP,
         aiBatchSize: AI_BATCH_SIZE,
-        aiScoreThreshold: 7,
+        aiScoreThreshold: AI_SCORE_THRESHOLD,
       }
     )
+
+    // Unscored pairs are not persisted, so they are not cached and the next
+    // run whose window still covers the tender scores them again.
+    if (unscoredTenderIds.length > 0) {
+      unscoredTotal += unscoredTenderIds.length
+      console.error(
+        `[matching] Profile "${profile.name}": ${unscoredTenderIds.length} candidates left unscored after AI failures — will retry next run`
+      )
+    }
 
     console.log(
       `[matching] Profile "${profile.name}" → ${results.length} matches from ${candidates.length} candidates`
@@ -309,6 +321,10 @@ export async function matchNewTenders(
       { onConflict: 'tender_id,profile_id' }
     )
     if (error) console.error('Failed to upsert matches:', error)
+  }
+
+  if (unscoredTotal > 0) {
+    console.error(`[matching] ${unscoredTotal} candidate pairs unscored this run (AI failures)`)
   }
 
   return matches

@@ -5,6 +5,10 @@
       "schedule": "0 4 * * *"
     },
     {
+      "path": "/api/cron/rescore-fallback",
+      "schedule": "30 4 * * *"
+    },
+    {
       "path": "/api/cron/match-and-notify",
       "schedule": "0 5 * * *"
     },

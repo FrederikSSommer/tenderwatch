@@ -55,6 +55,7 @@ src/
 ## Cron jobs (vercel.json)
 
 - `6am` — `/api/cron/ingest-ted` — Fetch new tenders from TED API
+- `4:30` — `/api/cron/rescore-fallback` — Re-score legacy matches saved by the old AI-failure fallback (no-op once none remain)
 - `7am` — `/api/cron/match-and-notify` — Run matching pipeline + send email digests
 - `3am Sunday` — `/api/cron/cleanup` — Database maintenance
 
@@ -67,7 +68,8 @@ src/
 - Supabase service-role client for cron/backfill (bypasses RLS). Anon client for user-facing pages.
 - Paginated Supabase queries (`.range()`) for large result sets — default limit is 1000 rows.
 - Cache batching in groups of 500 for `.in()` queries to avoid PostgREST URL limits.
-- Claude JSON output: prompt for "Return ONLY a JSON array/object" and regex-extract the first `[...]`/`{...}` span. (Assistant-prefill is not used — it returns a 400 on Sonnet 4.6.)
+- Claude JSON output: the matching rerank (`src/lib/matching/core.ts`) uses structured outputs (`output_config.format` json_schema) so the response is guaranteed valid JSON. Older endpoints prompt for "Return ONLY a JSON array/object" and regex-extract the first `[...]`/`{...}` span. (Assistant-prefill is not used — it returns a 400 on Sonnet 4.6.)
+- Never persist a match Claude did not score. A failed rerank batch is retried, then reported as `unscoredTenderIds` and left out so a later run retries it.
 - CPV codes always 8-digit padded: `normCpv = (c) => c.replace(/-\d+$/, '').padEnd(8, '0')`
 - "Follow" (not "Subscribe") for bookmarked tenders throughout UI.
 - Dark mode is CSS-based in `globals.css` — no per-component `dark:` classes needed.

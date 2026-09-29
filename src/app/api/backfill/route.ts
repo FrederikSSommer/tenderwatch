@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
 
     let matched = 0
     for (const profile of profiles) {
-      const results = await scoreAndRerank(
+      const { matches: results } = await scoreAndRerank(
         {
           id: profile.id,
           name: profile.name,
@@ -193,7 +193,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, ingested: 0, matched: 0, days })
     }
 
-    const scored = await scoreAndRerank(
+    const { matches: scored } = await scoreAndRerank(
       {
         id: profile.id,
         name: profile.name,

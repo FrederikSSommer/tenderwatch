@@ -312,7 +312,7 @@ export async function POST(request: NextRequest) {
   // (5-6). The user needs both — likes refine the profile, dislikes
   // teach Claude what to filter out when the final profile is generated.
 
-  const scored = await scoreAndRerank(
+  const { matches: scored } = await scoreAndRerank(
     {
       ...draftProfile,
       id: 'onboarding-draft',
