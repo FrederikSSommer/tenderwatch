@@ -4,5 +4,5 @@
 export const APP_URL = (
   (process.env.VERCEL_ENV === 'production' && process.env.VERCEL_PROJECT_PRODUCTION_URL
     ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-    : process.env.NEXT_PUBLIC_APP_URL) || 'https://tenderwatch.dk'
+    : process.env.NEXT_PUBLIC_APP_URL) || 'https://tenderwatchhq.com'
 ).replace(/\/+$/, '')
