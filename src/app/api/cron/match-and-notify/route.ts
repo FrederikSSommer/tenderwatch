@@ -158,6 +158,7 @@ export async function GET(request: NextRequest) {
             relevance_score: m.relevance_score,
             cpv_codes: tender.cpv_codes,
             ai_reason: m.ai_reason,
+            ted_url: tender.ted_url,
           }]
         })
         .sort((a, b) => b.relevance_score - a.relevance_score)

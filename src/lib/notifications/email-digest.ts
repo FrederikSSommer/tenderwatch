@@ -19,6 +19,7 @@ interface DigestTender {
   relevance_score: number
   cpv_codes: string[]
   ai_reason: string | null
+  ted_url?: string | null
 }
 
 interface DigestParams {
@@ -98,7 +99,8 @@ function renderTenderCard(t: DigestTender): string {
 
               <!-- CTA -->
               <p style="margin: 10px 0 0 0;">
-                <a href="${tenderUrl}" style="display: inline-block; font-size: 12px; font-weight: 500; color: #2563eb; text-decoration: none; border: 1px solid #dbeafe; border-radius: 6px; padding: 4px 12px;">View tender →</a>
+                <a href="${tenderUrl}" style="display: inline-block; font-size: 12px; font-weight: 500; color: #2563eb; text-decoration: none; border: 1px solid #dbeafe; border-radius: 6px; padding: 4px 12px;">View tender →</a>${t.ted_url ? `
+                <a href="${escapeHtml(t.ted_url)}" style="display: inline-block; font-size: 12px; font-weight: 500; color: #374151; text-decoration: none; border: 1px solid #e5e7eb; border-radius: 6px; padding: 4px 12px; margin-left: 6px;">View on TED ↗</a>` : ''}
               </p>
             </td>
           </tr>
@@ -217,6 +219,7 @@ function buildPlainText(params: DigestParams): string {
   const renderTender = (t: DigestTender, i: number) => {
     let line = `${i + 1}. ${t.title}\n   ${t.buyer_name || 'Unknown buyer'} · ${t.buyer_country || ''} · ${formatValue(t.estimated_value_eur) || 'Value not specified'}\n   Deadline: ${formatDeadline(t.submission_deadline)}`
     if (t.ai_reason) line += `\n   → ${t.ai_reason}`
+    if (t.ted_url) line += `\n   TED: ${t.ted_url}`
     return line + '\n'
   }
 
