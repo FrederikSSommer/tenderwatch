@@ -4,7 +4,7 @@ function getResend() {
   return new Resend(process.env.RESEND_API_KEY)
 }
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://tenderwatch.dk'
+import { APP_URL } from './app-url'
 // Resend's shared onboarding domain only delivers to the account owner's own
 // address — set EMAIL_FROM to an address on a Resend-verified domain in prod.
 const EMAIL_FROM = process.env.EMAIL_FROM || 'TenderWatch <onboarding@resend.dev>'
